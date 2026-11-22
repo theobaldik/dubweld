@@ -1,0 +1,64 @@
+[project]
+name = "dubweld"
+version = "0.1.0"
+description = "Lay a dubbed audio track from one release of a video onto another release, lip-synced"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "theobaldik" },
+]
+maintainers = [
+    { name = "theobaldik" },
+]
+requires-python = ">=3.11,<3.15"
+keywords = ["dub", "dubbing", "audio", "sync", "alignment", "ffmpeg", "mkv", "pal-speedup"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Multimedia :: Video :: Conversion",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.urls]
+Homepage = "https://github.com/theobaldik/dubweld"
+Source = "https://github.com/theobaldik/dubweld"
+Documentation = "https://github.com/theobaldik/dubweld#readme"
+Changelog = "https://github.com/theobaldik/dubweld/blob/master/CHANGELOG.md"
+Issues = "https://github.com/theobaldik/dubweld/issues"
+
+[project.scripts]
+dubweld = "dubweld.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "dubweld"
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "real: needs real releases (target<id>.*, donor<id>.*, optional synced<id>.*) in DUBWELD_DATA or the repo root",
+    "slow: runs ffmpeg on generated media for a few seconds",
+]

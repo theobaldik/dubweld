@@ -1,0 +1,21 @@
+.venv/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.idea/
+.claude/settings.local.json
+# Manual runs and media: test media is never committed
+tries/
+*.mkv
+*.mka
+*.m4v
+*.m4a
+*.mp4
+*.mov
+*.webm
+*.avi
+*.ts
+*.m2ts
+*.dubweld.json
