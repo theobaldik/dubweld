@@ -148,6 +148,25 @@ class TestProbe:
         with pytest.raises(ProbeError):
             info.audio_stream(1)
 
+    @pytest.mark.parametrize(
+        ("codec", "rate", "start", "padding", "skip", "first"),
+        [
+            ("aac", 48000, "-0.021000", 1024, 1024, 0.0),  # ffmpeg 8 reading AAC in Matroska
+            ("aac", 44100, "-0.023000", 1024, 1024, 0.0),
+            ("aac", 48000, "0.000000", 1024, 0, 0.0),  # ffmpeg 9, or AAC in MP4
+            ("opus", 48000, "-0.007000", 312, 0, -0.007),  # ffmpeg drops Opus priming itself
+            ("flac", 48000, "0.000000", 0, 0, 0.0),
+        ],
+    )
+    def test_untrimmed_priming(self, codec: str, rate: int, start: str, padding: int, skip: int, first: float) -> None:
+        stream = {"index": 0, "codec_type": "audio", "codec_name": codec, "sample_rate": str(rate), "channels": 2}
+        stream |= {"start_time": start, "initial_padding": padding}
+        info = parse_probe(Path("donor.mkv"), {"format": {"start_time": start}, "streams": [stream]})
+        a = info.audio_stream(0)
+        assert a.untrimmed_priming == skip
+        assert a.first_sample_time == pytest.approx(first, abs=1e-9)
+        assert info.start_time == float(start)
+
 
 class TestVideo:
     def test_black_runs(self) -> None:

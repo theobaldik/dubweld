@@ -193,7 +193,8 @@ def render_dub(
     if options.fill not in ("silence", "original"):
         raise RenderError(f"unknown fill {options.fill!r}")
     b_info = probe(Path(b_path), tools)
-    channels = b_info.audio_stream(plan.b.audio_index).channels or 2
+    b_stream = b_info.audio_stream(plan.b.audio_index)
+    channels = b_stream.channels or 2
     sr = SAMPLE_RATE
     total = int(round(plan.a.duration * sr))
     pad = max(1, int(round(options.crossfade * sr / 2)))
@@ -208,13 +209,20 @@ def render_dub(
     try:
         # Donor tape sample m is stretched donor time m / sr; target sample n = m + offset * sr
         donor = _Tape(
-            lambda: open_decoder(b_path, plan.b.audio_index, sr, channels, filt, tools=tools), channels, "the donor"
+            lambda: open_decoder(
+                b_path, plan.b.audio_index, sr, channels, filt, tools=tools, skip=b_stream.untrimmed_priming
+            ),
+            channels,
+            "the donor",
         )
         tapes.append(donor)
         target: _Tape | None = None
         if options.fill == "original":
+            a_skip = probe(Path(a_path), tools).audio_stream(plan.a.audio_index).untrimmed_priming
             target = _Tape(
-                lambda: open_decoder(a_path, plan.a.audio_index, sr, channels, f"aresample={sr}", tools=tools),
+                lambda: open_decoder(
+                    a_path, plan.a.audio_index, sr, channels, f"aresample={sr}", tools=tools, skip=a_skip
+                ),
                 channels,
                 "the target",
             )
@@ -330,7 +338,8 @@ def mux(
     log.warning("mkvmerge not found; muxing with ffmpeg")
     a_info = probe(Path(a_path), tools)
     n_audio = len(a_info.audio)
-    cmd = [tools.ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(a_path)]
+    # -copyts: by default ffmpeg shifts the dub's first packet (AAC priming, at -21 ms) to 0, making it 21 ms late
+    cmd = [tools.ffmpeg, "-nostdin", "-v", "error", "-y", "-copyts", "-i", str(a_path)]
     if abs(delay) > 1e-4:
         cmd += ["-itsoffset", f"{delay:.6f}"]
     cmd += [
@@ -390,7 +399,7 @@ def render(
     plan.validate()
     output.parent.mkdir(parents=True, exist_ok=True)
     suffix = CODECS.get(options.codec, ("", "", ".mka"))[2]
-    a_start = probe(Path(a_path), tools).audio_stream(plan.a.audio_index).start_time
+    a_start = probe(Path(a_path), tools).audio_stream(plan.a.audio_index).first_sample_time
     with tempfile.TemporaryDirectory(prefix=".dubweld-", dir=output.parent) as tmp:
         dub = Path(tmp) / f"dub{suffix}"
         partial = Path(tmp) / f"out{output.suffix.lower()}"

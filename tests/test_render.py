@@ -11,6 +11,7 @@ from conftest import PAL, needs_ffmpeg, needs_mkvmerge
 from dubweld.errors import RenderError
 from dubweld.ffmpeg import Tools, decode_pcm
 from dubweld.plan import InputRef, Plan, Segment
+from dubweld.probe import probe
 from dubweld.render import RenderOptions, render, render_dub, speed_filter
 
 SR = 48000
@@ -43,6 +44,12 @@ def write(path: Path, pcm: np.ndarray, sr: int, args: list[str]) -> Path:
     )
     raw.unlink()
     return path
+
+
+def decode(path: Path, audio_index: int, sr: int) -> np.ndarray:
+    """Decode a rendered stream like dubweld does, skipping AAC priming that ffmpeg 8 leaves in Matroska."""
+    skip = probe(path).audio_stream(audio_index).untrimmed_priming
+    return decode_pcm(path, audio_index, sr, skip=skip)
 
 
 def target_with_video(tmp: Path, duration: float = 12.0) -> Path:
@@ -133,7 +140,7 @@ class TestRender:
         plan = plan_for(a, b, 12.0, 10.0, [Segment(0.0, 12.0, 0.0)], PAL)
         out = tmp_path / "synced.mka"
         render_dub(plan, a, b, out, RenderOptions(codec="flac"))
-        pcm = decode_pcm(out, 0, SR)
+        pcm = decode(out, 0, SR)
         loud = np.where(np.abs(pcm) > 0.1)[0]
         assert (loud[-1] - loud[0]) / SR == pytest.approx(10 * PAL, abs=0.05)
         seg = pcm[SR : 5 * SR]
@@ -153,7 +160,7 @@ class TestRender:
         segs = [Segment(0.3, cut + 0.3, 0.3), Segment(cut + 1.8, 11.9, 1.8)]
         plan = plan_for(a, b, 12.0, 10.0, segs, PAL)
         out = render(plan, a, b, tmp_path / "synced.mkv", RenderOptions(codec=codec, language="cze", name="Test"))
-        pcm = decode_pcm(out, 1, SR)
+        pcm = decode(out, 1, SR)
         expected = [t * PAL + (0.3 if t * PAL < cut else 1.8) for t in b_clicks]
         found = click_times(pcm, SR)
         assert len(found) == len(expected)
@@ -165,7 +172,7 @@ class TestRender:
         plan = plan_for(a, b, 5.0, 4.0, [Segment(0.5, 4.5, 0.5)], 1.0)
         tools = Tools(mkvmerge="dubweld-no-such-mkvmerge")
         out = render(plan, a, b, tmp_path / "synced.mkv", RenderOptions(language="cze"), tools=tools)
-        found = click_times(decode_pcm(out, 1, SR), SR)
+        found = click_times(decode(out, 1, SR), SR)
         assert np.allclose(found, [1.5, 2.5], atol=0.002)
 
     def test_crossfade_has_no_click(self, tmp_path: Path) -> None:
@@ -176,7 +183,7 @@ class TestRender:
         plan = plan_for(a, b, 8.0, 10.0, [Segment(0.0, 4.0, 0.0), Segment(4.0, 8.0, -1.0013)], 1.0)
         out = tmp_path / "synced.mka"
         render_dub(plan, a, b, out, RenderOptions(codec="flac"))
-        pcm = decode_pcm(out, 0, SR)
+        pcm = decode(out, 0, SR)
         join = pcm[4 * SR - 2400 : 4 * SR + 2400]
         smooth_step = 2 * np.pi * 220 / SR * 0.5
         assert np.max(np.abs(np.diff(join))) < 1.5 * smooth_step
@@ -189,7 +196,7 @@ class TestRender:
         plan = plan_for(a, b, 6.0, 4.0, [Segment(1.0, 5.0, 1.0)], 1.0)
         out = tmp_path / "synced.mka"
         render_dub(plan, a, b, out, RenderOptions(codec="flac", fill="original"))
-        pcm = decode_pcm(out, 0, SR)
+        pcm = decode(out, 0, SR)
         rms = lambda x: float(np.sqrt(np.mean(x**2)))  # noqa: E731
         assert rms(pcm[: int(0.9 * SR)]) > 0.2
         assert rms(pcm[int(1.1 * SR) : int(4.9 * SR)]) < 0.01
@@ -202,7 +209,7 @@ class TestRender:
         plan = plan_for(a, b, 6.0, 4.0, [Segment(1.0, 5.0, 1.0)], 1.0)
         out = tmp_path / "synced.mka"
         render_dub(plan, a, b, out, RenderOptions(codec="flac"))
-        pcm = decode_pcm(out, 0, SR)
+        pcm = decode(out, 0, SR)
         assert len(pcm) == pytest.approx(6 * SR, abs=SR // 100)
         assert np.max(np.abs(pcm[: int(0.98 * SR)])) < 1e-4
         assert np.max(np.abs(pcm[int(5.02 * SR) :])) < 1e-4
@@ -246,7 +253,7 @@ def test_tape_rewinds_for_moved_scenes(tmp_path: Path) -> None:
     plan = plan_for(a, b, 10.0, 9.0, [Segment(0.0, 4.0, -5.0), Segment(4.0, 8.0, 4.0)], 1.0)
     out = tmp_path / "synced.mka"
     render_dub(plan, a, b, out, RenderOptions(codec="flac"))
-    assert np.allclose(click_times(decode_pcm(out, 0, SR), SR), [2.0, 5.0], atol=0.001)
+    assert np.allclose(click_times(decode(out, 0, SR), SR), [2.0, 5.0], atol=0.001)
 
 
 def test_output_must_be_matroska(tmp_path: Path) -> None:

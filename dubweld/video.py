@@ -60,7 +60,8 @@ class VideoReader:
             raise ValueError(f"{info.path.name} has no video stream")
         self.path: Path = info.path
         self.video = info.video
-        self.audio_start: float = info.audio_stream(audio_index).start_time
+        self.audio_start: float = info.audio_stream(audio_index).first_sample_time
+        self.file_start: float = info.start_time
         self.scale: float = scale
         self.tools: Tools = tools or Tools()
         self.duration: float = info.duration
@@ -82,7 +83,8 @@ class VideoReader:
         # Deblocking is invisible at 32x18 and costs ~10 % of the decode
         cmd = [self.tools.ffmpeg, "-nostdin", "-v", "error", "-skip_loop_filter", "all"]
         if seek > 0:
-            cmd += ["-ss", f"{seek - 0.5 / fps:.6f}"]
+            # ffmpeg's -ss counts from the file's start time, which AAC priming can make negative
+            cmd += ["-ss", f"{seek - self.file_start - 0.5 / fps:.6f}"]
         cmd += ["-t", f"{pts1 - seek:.6f}", "-i", str(self.path), "-map", f"0:v:{self.video.video_index}"]
         cmd += ["-an", "-sn", "-dn", "-vf", f"scale={WIDTH}:{HEIGHT}:flags=area,format=gray"]
         cmd += ["-fps_mode", "passthrough", "-f", "rawvideo", "-"]

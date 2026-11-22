@@ -73,15 +73,18 @@ def decode_pcm(
     start: float | None = None,
     duration: float | None = None,
     tools: Tools | None = None,
+    skip: int = 0,
 ) -> np.ndarray:
     """
     Decode one audio stream to float32 PCM in memory.
 
     :param channels: output channel count; None keeps the stream's own
+    :param skip: samples (at the stream's own rate) to drop from the start, see `AudioStream.untrimmed_priming`
     :return: shape (samples,) for mono, (samples, channels) otherwise
     """
     tools = tools or Tools()
     cmd = [tools.ffmpeg, "-nostdin", "-v", "error", *audio_args(path, audio_index, start, duration)]
+    filters = _with_skip(filters, skip, start)
     if filters:
         cmd += ["-af", filters]
     if channels is not None:
@@ -111,6 +114,15 @@ def _channel_count(_data: np.ndarray, path: Path, audio_index: int, tools: Tools
         ]
     )
     return int(str(out).strip().splitlines()[0])
+
+
+def _with_skip(filters: str | None, skip: int, start: float | None) -> str | None:
+    if skip <= 0:
+        return filters
+    if start:
+        raise ValueError("skipping priming samples only works when decoding from the start")
+    # First in the chain, so it counts samples at the stream's own rate
+    return f"atrim=start_sample={skip}" + (f",{filters}" if filters else "")
 
 
 def gray_frames(
@@ -157,10 +169,16 @@ def open_decoder(
     start: float | None = None,
     duration: float | None = None,
     tools: Tools | None = None,
+    skip: int = 0,
 ) -> subprocess.Popen:
-    """Start an ffmpeg process streaming float32 PCM of one audio stream to its stdout."""
+    """
+    Start an ffmpeg process streaming float32 PCM of one audio stream to its stdout.
+
+    :param skip: samples (at the stream's own rate) to drop from the start, see `AudioStream.untrimmed_priming`
+    """
     tools = tools or Tools()
     cmd = [tools.ffmpeg, "-nostdin", "-v", "error", *audio_args(path, audio_index, start, duration)]
+    filters = _with_skip(filters, skip, start)
     if filters:
         cmd += ["-af", filters]
     cmd += ["-ac", str(channels), "-ar", str(sample_rate), "-f", "f32le", "-acodec", "pcm_f32le", "-"]

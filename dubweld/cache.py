@@ -15,7 +15,7 @@ from dubweld.features import Features
 log = logging.getLogger(__name__)
 
 # Bump when feature extraction changes, so stale entries are never read
-FEATURE_VERSION = 2
+FEATURE_VERSION = 3
 
 
 def default_cache_dir() -> Path:

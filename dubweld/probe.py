@@ -27,6 +27,27 @@ class AudioStream:
     language: str = "und"
     title: str = ""
     default: bool = False
+    initial_padding: int = 0
+
+    @property
+    def untrimmed_priming(self) -> int:
+        """
+        Encoder priming samples ffmpeg will decode instead of dropping, to be skipped by hand.
+
+        ffmpeg 8 ignores Matroska's codec delay for AAC: it decodes the 1024 priming samples and reports the stream as
+        starting before zero. ffmpeg 9 drops them and reports 0. Opus priming is dropped by both.
+        """
+        if self.codec == "aac" and self.start_time < 0 and self.initial_padding > 0:
+            return self.initial_padding
+        return 0
+
+    @property
+    def first_sample_time(self) -> float:
+        """Presentation time (s) of the first sample dubweld decodes, after skipping `untrimmed_priming`."""
+        if not self.untrimmed_priming or not self.sample_rate:
+            return self.start_time
+        # Matroska timestamps are whole milliseconds
+        return round(self.start_time + self.untrimmed_priming / self.sample_rate, 3)
 
 
 @dataclass
@@ -52,6 +73,7 @@ class MediaInfo:
     mtime: float
     audio: list[AudioStream] = field(default_factory=list)
     video: VideoStream | None = None
+    start_time: float = 0.0
 
     def audio_stream(self, audio_index: int) -> AudioStream:
         """
@@ -90,7 +112,13 @@ def _float(value: object, default: float = 0.0) -> float:
 def parse_probe(path: Path, data: dict, size: int = 0, mtime: float = 0.0) -> MediaInfo:
     """Build a `MediaInfo` from ffprobe's `-show_streams -show_format` JSON."""
     fmt = data.get("format", {})
-    info = MediaInfo(path=path, duration=_float(fmt.get("duration")), size=size, mtime=mtime)
+    info = MediaInfo(
+        path=path,
+        duration=_float(fmt.get("duration")),
+        size=size,
+        mtime=mtime,
+        start_time=_float(fmt.get("start_time")),
+    )
     audio_index = 0
     video_index = 0
     for s in data.get("streams", []):
@@ -109,6 +137,7 @@ def parse_probe(path: Path, data: dict, size: int = 0, mtime: float = 0.0) -> Me
                     language=tags.get("language", "und"),
                     title=tags.get("title", ""),
                     default=bool(disposition.get("default")),
+                    initial_padding=int(s.get("initial_padding") or 0),
                 )
             )
             audio_index += 1

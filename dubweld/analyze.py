@@ -62,7 +62,8 @@ def load_features(info: MediaInfo, audio_index: int, cache_dir: Path | None, too
 
     def compute() -> Features:
         log.info("decoding %s (audio a:%d)", info.path.name, audio_index)
-        return compute_features(decode_pcm(info.path, audio_index, SAMPLE_RATE, tools=tools))
+        skip = info.audio_stream(audio_index).untrimmed_priming
+        return compute_features(decode_pcm(info.path, audio_index, SAMPLE_RATE, tools=tools, skip=skip))
 
     return cache.features(info.path, audio_index, info.size, info.mtime, cache_dir, compute)
 
