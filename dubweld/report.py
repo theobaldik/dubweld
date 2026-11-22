@@ -307,6 +307,11 @@ def build_html(plan: Plan, report: VerifyReport | None = None) -> str:
             f"OUT OF SYNC {mmss(a)} - {mmss(b)}: {n} windows agree on {r * 1000:+.0f} ms"
             for a, b, r, n in report.offsync
         ]
+        notes += [
+            f"{mmss(a)} - {mmss(b)}: {n} windows agree on {r * 1000:+.0f} ms where the dub matches nearby; probably "
+            "dialogue, listen"
+            for a, b, r, n in report.doubtful
+        ]
         notes += [f"{mmss(t)}: isolated reading {r * 1000:+.0f} ms (score {s:.2f})" for t, r, s in report.outliers]
         notes += report.messages
         if notes:

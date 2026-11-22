@@ -21,7 +21,9 @@ NAMED: dict[str, Fraction] = {
     "pal24": Fraction(25, 24),  # 24 -> 25
     "ntsc": Fraction(24) / FILM,  # 23.976 -> 24, also 29.97 -> 30
 }
-CONFIDENT = 0.5
+# Low enough for weak matches (a dialogue-heavy episode peaks around 0.4-0.6): flatness, not the score, rejects
+# chance matches
+CONFIDENT = 0.4
 FLAT_TOLERANCE = 0.010
 FLAT_HORIZON = 120.0
 SPARSE_HOP = 6.0
@@ -138,9 +140,12 @@ def choose_ratio(
     fps_b: Fraction | None,
     forced: float | None = None,
     progress: ProgressFn | None = None,
+    hop: float = 2.0,
 ) -> RatioChoice:
     """
     Pick the speed ratio (donor seconds × ratio = target seconds) by how flat the confident offsets are.
+
+    :param hop: window spacing (s) of the analysis; candidates are re-scored at it when the sparse pass is too thin
 
     :raises AnalysisError: when no ratio, standard or estimated, gives a usable match
     """
@@ -159,7 +164,23 @@ def choose_ratio(
         )
         if progress:
             progress((i + 1) / len(cands))
-    best = max(cands, key=lambda c: (c.flat, c.confident))
+
+    # Neighboring ratios (PAL and 25/24 differ by 0.1%) can be about as flat; the drift tells them apart, even when
+    # noise pushes the right one's over MAX_SLOPE
+    def rank(c: Candidate) -> tuple[bool, bool, float, int]:
+        enough = c.flat >= MIN_FLAT
+        return enough and abs(c.slope) <= MAX_SLOPE, enough, -abs(c.slope) if enough else 0.0, c.flat
+
+    best = max(cands, key=rank)
+    spacing = SPARSE_HOP
+    if not rank(best)[0] and hop < SPARSE_HOP:
+        spacing = hop
+        # Too few matches for the sparse pass (a dialogue-heavy episode): look again as densely as the analysis will
+        for cand in cands:
+            if cand.flat:
+                _evaluate(matcher, donor, cand, spacing)
+                log.debug("ratio %s at %.1f s spacing: %d flat, drift %.2e", cand.name, hop, cand.flat, cand.slope)
+        best = max(cands, key=rank)
     if best.flat >= MIN_FLAT and abs(best.slope) <= MAX_SLOPE:
         return RatioChoice(ratio=best.ratio, name=best.name, method="snapped", candidates=cands)
 
@@ -174,11 +195,11 @@ def choose_ratio(
             )
     cand = Candidate(name="estimated", ratio=start.ratio * (1 + start.slope))
     for _ in range(3):
-        _evaluate(matcher, donor, cand, SPARSE_HOP)
+        _evaluate(matcher, donor, cand, spacing)
         if abs(cand.slope) <= MAX_SLOPE / 4:
             break
         refined = Candidate(name="estimated", ratio=cand.ratio * (1 + cand.slope))
-        _evaluate(matcher, donor, refined, SPARSE_HOP)
+        _evaluate(matcher, donor, refined, spacing)
         if (refined.flat, -abs(refined.slope)) <= (cand.flat, -abs(cand.slope)):
             break
         cand = refined

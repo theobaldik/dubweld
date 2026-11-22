@@ -39,14 +39,16 @@ releases on that shared M&E, using language-agnostic band-energy features that i
 between the mixes. The matches are accurate to about a millisecond.
 
 1. **Speed ratio.** dubweld tries the ratio implied by the frame rates first (25 vs 23.976 fps means a PAL speed-up),
-   then the other standard ratios. It picks the one under which confident matches stay flat. It never settles for
+   then the other standard ratios. It picks the one under which confident matches stay flat and don't drift (PAL
+   and 25/24 differ by only 0.1%). It never settles for
    a loose estimate: being 3×10⁻⁴ off drifts 0.3 s over an episode. A free-form estimate is used only when no
    standard ratio fits, and dubweld warns loudly when that happens.
 2. **Offsets.** It slides 8 s windows of the donor over the whole target (normalized cross-correlation, coarse to
    fine, sub-frame accurate), then looks for *levels*: tight clusters (±10 ms) of high-scoring windows. The dubbed
    dialogue roughly lines up with the original dialogue and forms a second, looser cluster 0.2–0.3 s away, sometimes
    with *more* windows than the true level. dubweld prefers crispness over window count; the video only breaks
-   ties between equally crisp levels.
+   ties between equally crisp levels. A donor edit of a single frame (a 40 ms step) shows up as two levels, and
+   neither makes the other look loose.
 3. **Segments and cuts.** A Viterbi pass assigns every window to a level. Offsets may jump up (the target has extra
    material, left as a gap), jump down (the donor has extra material, which is dropped) or return to an earlier
    level. There is no limit on jump size or segment length: the donor's unmatched start and end get a second look
@@ -57,7 +59,8 @@ between the mixes. The matches are accurate to about a millisecond.
    segment is placed at its offset with 30 ms crossfades, and the gaps are filled with silence or the target's own
    audio. The donor is decoded in one sequential pass, never seeked, so placement is sample-accurate.
 5. **Verify.** The rendered track is re-matched against the target. dubweld reports the residual offsets, the stretches
-   it could not check, and any part where several windows agree on a non-zero offset.
+   it could not check, and any part where several windows agree on a non-zero offset. Such a part fails the
+   verification, unless it looks like the dialogue match in a segment that matches elsewhere: then it only warns.
 
 ## Requirements
 

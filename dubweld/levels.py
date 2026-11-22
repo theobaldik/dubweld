@@ -70,19 +70,26 @@ def find_levels(track: OffsetTrack) -> list[Level]:
         center = _weighted_median(o[near], s[near])
         used |= near
         centers.append(center)
+    # Centers come strongest seed first: a weaker one close by must not take the stronger one's place
     merged: list[float] = []
-    for c in sorted(centers):
-        if merged and c - merged[-1] <= MERGE_DISTANCE:
-            continue
-        merged.append(c)
-    levels: list[Level] = []
+    for c in centers:
+        if all(abs(c - m) > MERGE_DISTANCE for m in merged):
+            merged.append(c)
+    candidates = []
     for c in merged:
         members = (s >= MEMBER_SCORE) & (np.abs(o - c) <= TOLERANCE)
-        neighborhood = (s >= MEMBER_SCORE) & (np.abs(o - c) <= NEIGHBORHOOD)
         seeds_n = int(np.sum(members & (s >= SEED_SCORE)))
         if members.sum() < MIN_MEMBERS or seeds_n == 0:
             continue
-        c = _weighted_median(o[members], s[members])
+        candidates.append((_weighted_median(o[members], s[members]), members, seeds_n))
+    levels: list[Level] = []
+    candidates.sort(key=lambda x: -np.sum(s[x[1]]))
+    # Windows a stronger level explains are no sign of looseness: a donor edit of one frame put two crisp levels 34-49
+    # ms apart, inside each other's neighborhood
+    explained = np.zeros(len(t), dtype=bool)
+    for c, members, seeds_n in candidates:
+        neighborhood = (s >= MEMBER_SCORE) & (np.abs(o - c) <= NEIGHBORHOOD) & (~explained | members)
+        explained |= members
         levels.append(
             Level(
                 offset=c,
@@ -101,7 +108,9 @@ def find_levels(track: OffsetTrack) -> list[Level]:
 
 def prune_levels(levels: list[Level], av_consistency: dict[int, float] | None = None) -> list[Level]:
     """
-    Drop loose levels that compete with a crisp one 0.1-0.6 s away; prefer crispness over window count.
+    Drop loose levels that compete with a crisper one up to 0.6 s away, and levels with less than half its quality;
+    prefer crispness over window count. A level must survive every rival in reach; two crisp levels apart in time
+    both stay.
 
     :param av_consistency: optional per-level distance (s) of its audio-video offset difference from the other
         crisp levels'; between two crisp (or two loose) levels, the one the video disagrees with by > 0.1 s more
@@ -110,9 +119,13 @@ def prune_levels(levels: list[Level], av_consistency: dict[int, float] | None = 
     """
     kept: list[Level] = []
     for lv in sorted(levels, key=lambda x: -x.quality):
-        rival = next((k for k in kept if abs(k.offset - lv.offset) <= COMPETE_DISTANCE), None)
-        if rival is not None:
-            loses = lv.crispness < CRISP or lv.quality < 0.5 * rival.quality
+        lv.dropped = ""
+        for rival in (k for k in kept if abs(k.offset - lv.offset) <= COMPETE_DISTANCE):
+            # Two crisp levels apart in time are consecutive segments (a donor edit), not a level and its dialogue
+            apart = lv.last < rival.first or rival.last < lv.first
+            if apart and min(lv.crispness, rival.crispness) >= CRISP:
+                continue
+            loses = (lv.crispness < CRISP and lv.crispness <= rival.crispness) or lv.quality < 0.5 * rival.quality
             # Video only settles contests crispness cannot: the donor's A/V sync itself varies by 0.2 s
             same_kind = (lv.crispness >= CRISP) == (rival.crispness >= CRISP)
             if av_consistency is not None and same_kind:
@@ -122,7 +135,9 @@ def prune_levels(levels: list[Level], av_consistency: dict[int, float] | None = 
                     loses = a > b
             if loses:
                 lv.dropped = f"loose cluster next to {rival.offset:+.3f} s"
-                continue
+                break
+        if lv.dropped:
+            continue
         kept.append(lv)
     return sorted(kept, key=lambda x: x.first)
 

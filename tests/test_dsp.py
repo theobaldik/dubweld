@@ -10,7 +10,7 @@ from dubweld import ratio as ratio_mod
 from dubweld.features import FRAME_RATE, N_BANDS, band_edges, compute_features, moving_average, stretch
 from dubweld.levels import Level, changepoint, find_levels, prune_levels, runs_of, viterbi
 from dubweld.ratio import MAX_SLOPE, NAMED, candidates, choose_ratio, drift_slope, flat_count, parse_ratio
-from dubweld.verify import _crisp_clusters
+from dubweld.verify import _crisp_clusters, _in_sync_nearby
 from dubweld.xcorr import Matcher, OffsetTrack, offset_track, scores_at_offset
 
 SR = 16000
@@ -176,6 +176,13 @@ class TestLevels:
         kept = prune_levels(levels)
         assert [round(lv.offset, 3) for lv in kept] == [pytest.approx(6.276, abs=0.003)]
 
+    def test_close_weaker_center_does_not_replace_a_stronger_one(self) -> None:
+        # A real release: a crisp run at +1.896 s was merged into a dialogue cluster at +1.883 s and lost
+        o = np.array([1.883, 1.882, 1.884, 1.896, 1.896, 1.897, 1.896, 1.895, 1.896])
+        s = np.array([0.52, 0.51, 0.5, 0.7, 0.8, 0.75, 0.77, 0.72, 0.69])
+        levels = find_levels(_track(np.arange(9) * 2.0, o, s))
+        assert round(levels[0].offset, 3) == 1.896
+
     def test_levels_need_three_windows(self) -> None:
         t = np.arange(6) * 2.0
         o = np.array([1.0, 1.001, 3.0, 3.001, 3.002, 9.0])
@@ -186,6 +193,16 @@ class TestLevels:
         a = Level(offset=4.0, members=10, seeds=8, crispness=1.0, median_score=0.7, first=0, last=100, support=7)
         b = Level(offset=4.3, members=8, seeds=6, crispness=0.9, median_score=0.7, first=200, last=300, support=5)
         assert len(prune_levels([a, b])) == 2
+
+    def test_crisp_level_a_frame_away_is_kept(self) -> None:
+        # A real release: a one-frame donor edit moved the offset by 49 ms for 20 s of a segment
+        a = Level(
+            offset=5.853, members=24, seeds=20, crispness=0.62, median_score=0.6, first=986, last=1218, support=13
+        )
+        b = Level(offset=5.804, members=10, seeds=8, crispness=1.0, median_score=0.7, first=928, last=946, support=7)
+        assert len(prune_levels([a, b])) == 2
+        b.crispness = 0.31
+        assert prune_levels([a, b]) == [a]
 
     def test_video_does_not_rescue_a_loose_level(self) -> None:
         # A real release: the video favored loose clusters 0.18-0.27 s off; the donor's A/V sync varies by that much
@@ -277,3 +294,12 @@ class TestVerifyClusters:
     def test_sparse_dialogue_band_agreement_is_not(self) -> None:
         r = np.array([-0.230, -0.229, -0.231, -0.230])
         assert _crisp_clusters(self.T, r, np.full(4, 0.55), np.ones(4, dtype=bool)) == []
+
+    def test_matches_nearby_mark_a_dialogue_band_cluster(self) -> None:
+        # A dialogue-heavy real episode: dialogue agreed on -242 ms over 72 s, with in-sync matches around it
+        t = np.arange(0.0, 400.0, 4.0)
+        zero = np.isin(t, [40.0, 324.0])
+        assert _in_sync_nearby(t, zero, 316.0, 388.0, None)
+        assert not _in_sync_nearby(t, zero, 100.0, 200.0, None)
+        assert _in_sync_nearby(t, zero, 100.0, 200.0, [(0.0, 250.0), (250.0, 400.0)])
+        assert not _in_sync_nearby(t, zero, 100.0, 200.0, [(0.0, 30.0), (60.0, 250.0)])

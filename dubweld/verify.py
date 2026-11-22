@@ -42,7 +42,8 @@ class VerifyReport:
     """
     How well a rendered dub matches the target at offset 0. Residuals are seconds; negative means the dub is late.
 
-    `verdict` is pass, warn or fail. A fail means a consistent non-zero offset (a crisp cluster) somewhere.
+    `verdict` is pass, warn or fail. A fail means a consistent non-zero offset (a crisp cluster) somewhere; a cluster
+    in the dialogue band where the dub matches nearby (`doubtful`) only warns.
     """
 
     verdict: str
@@ -57,6 +58,7 @@ class VerifyReport:
     uncovered: list[tuple[float, float]] = field(default_factory=list)
     offsync: list[tuple[float, float, float, int]] = field(default_factory=list)
     outliers: list[tuple[float, float, float]] = field(default_factory=list)
+    doubtful: list[tuple[float, float, float, int]] = field(default_factory=list)
     dialogue: int = 0
     messages: list[str] = field(default_factory=list)
     times: list[float] = field(default_factory=list)
@@ -73,6 +75,11 @@ class VerifyReport:
         ]
         for start, end, residual, n in self.offsync:
             lines.append(f"  OUT OF SYNC {mmss(start)} - {mmss(end)}: {n} windows agree on {residual * 1000:+.0f} ms")
+        for start, end, residual, n in self.doubtful:
+            lines.append(
+                f"  probably dialogue {mmss(start)} - {mmss(end)}: {n} windows agree on {residual * 1000:+.0f} ms "
+                "where the dub matches nearby (listen)"
+            )
         if self.outliers:
             lines.append("  isolated confident windows off by more than 40 ms (probably noise; listen if unsure):")
             lines += [f"    {mmss(t)}  {r * 1000:+.0f} ms (score {s:.2f})" for t, r, s in self.outliers]
@@ -111,6 +118,19 @@ def local_residuals(matcher: Matcher, dub: Features, starts: np.ndarray, m: int)
     return res, sc
 
 
+def _in_sync_nearby(
+    t: np.ndarray, zero: np.ndarray, t0: float, t1: float, pieces: list[tuple[float, float]] | None
+) -> bool:
+    """
+    Whether the dub matches at offset 0 (`zero`) between `t0` and `t1`, or elsewhere in the piece holding them: a
+    piece plays continuously at one offset, so a dialogue-band cluster there is most likely the dialogue.
+    """
+    if np.any(zero & (t > t0) & (t < t1)):
+        return True
+    piece = next(((a, b) for a, b in pieces or [] if a <= t0 and t1 <= b), None)
+    return piece is not None and bool(np.any(zero & (t >= piece[0]) & (t <= piece[1])))
+
+
 def _crisp_clusters(
     t: np.ndarray, r: np.ndarray, s: np.ndarray, cand: np.ndarray
 ) -> list[tuple[float, float, float, int]]:
@@ -141,12 +161,14 @@ def verify(
     tools: Tools | None = None,
     cache_dir: Path | None = None,
     progress: Callable[[float], None] | None = None,
+    pieces: list[tuple[float, float]] | None = None,
 ) -> VerifyReport:
     """
     Re-match a rendered dub against the target at ratio 1.
 
     :param a_track: the target's audio stream to compare with
     :param track: audio stream of `out_path` holding the dub; None takes its last audio stream
+    :param pieces: optional target-time spans (s) each played continuously at one offset (the plan's segments)
     """
     tools = tools or Tools()
     a_info, o_info = probe(Path(a_path), tools), probe(Path(out_path), tools)
@@ -174,13 +196,18 @@ def verify(
 
     # A consistent non-zero offset is an error; the dialogue match wanders and does not form crisp clusters
     off = active & (sc >= CLUSTER_SCORE) & (np.abs(res) > NEAR_ZERO)
-    offsync = _crisp_clusters(t, res, sc, off)
+    clusters = _crisp_clusters(t, res, sc, off)
+    # Dialogue in one scene can agree with itself for a few windows; next to in-sync matches it's only worth a listen
+    doubtful = [
+        c for c in clusters if DIALOGUE[0] <= c[2] <= DIALOGUE[1] and _in_sync_nearby(t, matched, c[0], c[1], pieces)
+    ]
+    offsync = [c for c in clusters if c not in doubtful]
     far = active & (glob.scores >= CONFIDENT) & (np.abs(glob.offsets) > LOCAL_REACH)
     for i0, i1 in _runs(far):
         if i1 - i0 >= 2 and np.ptp(glob.offsets[i0:i1]) <= 0.020:
             offsync.append((float(t[i0]), float(t[i1 - 1]), float(np.median(glob.offsets[i0:i1])), int(i1 - i0)))
     in_cluster = np.zeros(len(t), dtype=bool)
-    for start, end, residual, _ in offsync:
+    for start, end, residual, _ in offsync + doubtful:
         in_cluster |= (t >= start) & (t <= end) & (np.abs(res - residual) <= CLUSTER_TOLERANCE)
     outliers = active & (sc >= CONFIDENT) & (np.abs(res) > NEAR_ZERO) & ~dialogue & ~in_cluster
 
@@ -202,7 +229,7 @@ def verify(
         verdict = "warn"
         late = "late" if bias_ms < 0 else "early"
         messages.append(f"the whole dub is about {abs(bias_ms):.0f} ms {late} (a muxing or encoder delay?)")
-    elif median_ms > 10 or outliers.any():
+    elif median_ms > 10 or outliers.any() or doubtful:
         verdict = "warn"
     else:
         verdict = "pass"
@@ -218,6 +245,7 @@ def verify(
         coverage=float(matched.sum() / max(1, active.sum())),
         uncovered=uncovered,
         offsync=sorted(offsync),
+        doubtful=sorted(doubtful),
         outliers=[(float(t[i]), float(res[i]), float(sc[i])) for i in np.where(outliers)[0]],
         dialogue=int(dialogue.sum()),
         messages=messages,

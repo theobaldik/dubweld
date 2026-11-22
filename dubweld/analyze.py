@@ -170,7 +170,9 @@ def analyze(
 
     fps_a = a_info.video.fps if a_info.video else None
     fps_b = b_info.video.fps if b_info.video else None
-    choice = choose_ratio(matcher, fb, fps_a, fps_b, forced=options.ratio, progress=step("speed ratio"))
+    choice = choose_ratio(
+        matcher, fb, fps_a, fps_b, forced=options.ratio, progress=step("speed ratio"), hop=options.hop
+    )
     log.info("speed ratio %.10f (%s, %s)", choice.ratio, choice.name, choice.method)
     donor = stretch(fb, choice.ratio)
 

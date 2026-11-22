@@ -48,7 +48,7 @@
 | `analyze.py` | `analyze()` orchestrates everything into a `Plan`; a second look at the donor's unmatched head and tail with 4 s windows finds short end segments (a closing jingle) |
 | `plan.py` | `Plan` / `Segment` / `Cut` / `Evidence` / `Gap`, JSON save/load, the text summary |
 | `render.py` | streaming render (`_Tape` readers, raised-cosine crossfades), encode, mux |
-| `verify.py` | local ±1 s residuals of the rendered track, crisp non-zero clusters (= out of sync; sparser agreement counts outside the dialogue band), coverage |
+| `verify.py` | local ±1 s residuals of the rendered track, crisp non-zero clusters (= out of sync; sparser agreement counts outside the dialogue band, only a warning near matches at 0 inside it), coverage |
 | `report.py` | self-contained HTML with inline SVG |
 | `cli.py` | argparse front end; progress on stderr, summaries on stdout |
 
@@ -66,6 +66,21 @@ ratio. Feature frame *i* is centered at `T0 + i / 50` s. A plan's segments are a
   clusters in three segments.
 - **Snapping beats a noisy drift.** Drift measured between a few sparse windows is noisy (2 ms over 40 s is 5×10⁻⁵);
   keep the standard ratio unless the free-form estimate has clearly more flat windows.
+- **Flatness, not the score, rejects chance matches.** The ratio counts windows from score 0.4 (`ratio.CONFIDENT`):
+  in a dialogue-heavy episode only 14 windows reached 0.5 and no ratio looked flat, though PAL was plainly right.
+  When no ratio passes, the candidates are scored again at the analysis's window spacing.
+- **Drift breaks ties between neighboring ratios.** PAL and 25/24 differ by 0.1% and can be equally flat, and noise
+  can push even the right ratio's drift over `MAX_SLOPE`: among ratios with enough flat windows, the least drift wins
+  (`choose_ratio`'s `rank`).
+- **A weaker center never replaces a stronger one.** `find_levels` merges seed centers strongest first: merging by
+  offset order swallowed a crisp level into a dialogue cluster 13 ms below it.
+- **Close real levels must not make each other loose.** A one-frame donor edit puts two real levels 34-49 ms apart:
+  crispness ignores windows a stronger level explains, two crisp levels apart in time never prune each other, and a
+  loose level loses only to a crisper rival (in a dialogue-heavy episode both real levels were loose). A level must
+  survive every rival within `COMPETE_DISTANCE`, not only the first: dialogue is sometimes only 60-90 ms away.
+- **The dub can't be off where it matches.** A segment plays at one offset, so a dialogue-band cluster in verification
+  with matches at offset 0 between its windows or elsewhere in its segment (`pieces`, the plan's segments) only
+  warns: dialogue in one scene agrees with itself for a few windows and failed correct renders in five episodes.
 - **No limits on jump size or segment length**, and cuts are placed by evidence, never guessed in matchless gaps.
 - **Resample before `asetrate`.** `asetrate` alone assumes the input already runs at the target rate.
 - **No input seeking for audio placement.** ffmpeg `-ss` before `-i` is not sample-accurate for AAC in MP4 (21 ms

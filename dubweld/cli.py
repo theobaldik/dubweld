@@ -237,7 +237,10 @@ def _verify_and_report(
     target: Path, output: Path, plan: Plan, a_track: int, cache_dir: Path | None, report_path: Path, console: Console
 ) -> VerifyReport:
     log.info("verifying %s", output.name)
-    report = verify(target, output, a_track=a_track, cache_dir=cache_dir, progress=console.step("verify"))
+    pieces = [(seg.a_start, seg.a_end) for seg in plan.segments]
+    report = verify(
+        target, output, a_track=a_track, cache_dir=cache_dir, progress=console.step("verify"), pieces=pieces
+    )
     console.end_line()
     print(report.describe())
     write_report(report_path, plan, report)
