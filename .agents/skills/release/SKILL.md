@@ -6,7 +6,7 @@ description: Prepare the dubweld repo for a new release — fix outdated docs, r
 # Prepare a release
 
 Prepares the working tree for `chore: release X.Y.Z`. The user commits, tags and publishes; never run `git commit`,
-`git tag`, `git push`, `gh release create` or `uv publish` here. AGENTS.md holds the rules this follows (version
+`git tag`, `git push` or `uv publish` here. AGENTS.md holds the rules this follows (version
 source, changelog format, commit types); read its *Commits and changelog* section first.
 
 Work through the steps in order and stop at the first one that fails: a failure must leave no version bump behind.
@@ -98,8 +98,8 @@ entries first in their group; no commit hashes, no `feat:` prefixes, no pasted c
    behind. Keep a first release's `_Initial release._` line. Add
    `[X.Y.Z]: https://github.com/theobaldik/dubweld/releases/tag/vX.Y.Z` at the top of the link list at the end of the
    file (start the list if there is none).
-6. Check that the section stands alone: step 7 extracts everything from its heading up to the next `## ` heading or
-   link definition as the GitHub release notes.
+6. Check that the section is what the release workflow will publish: `.github/workflows/release.yml` extracts
+   everything from the heading up to the next `## ` heading or link definition.
 
 ## 6. Bump the version
 
@@ -129,8 +129,6 @@ Then give the commands for the user to run, without running any of them:
 
 1. If step 2 changed docs, commit them first, as a separate `docs: ...` commit (stage those files only); then the
    rest as `chore: release X.Y.Z`. Both messages follow Conventional Commits, scope as in AGENTS.md.
-2. `git tag vX.Y.Z && git push origin master vX.Y.Z`
-3. The GitHub release, with the changelog section as notes (no release workflow exists yet):
-   `awk '/^## \[X.Y.Z\]/{f=1;next} f&&(/^## /||/^\[/){exit} f' CHANGELOG.md > "$SCRATCH/notes.md"`, then
-   `gh release create vX.Y.Z --title vX.Y.Z --notes-file "$SCRATCH/notes.md" "$SCRATCH/dist"/*`
-4. Only if the user publishes to PyPI: `uv publish "$SCRATCH/dist"/*` (rebuild first if anything changed after step 3).
+2. `git tag vX.Y.Z && git push origin master vX.Y.Z`. The tag push makes `.github/workflows/release.yml` check that
+   the tag matches `project.version` and create the GitHub release from the changelog section.
+3. Only if the user publishes to PyPI: `uv publish "$SCRATCH/dist"/*` (rebuild first if anything changed after step 3).

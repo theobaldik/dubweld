@@ -72,6 +72,10 @@ ratio. Feature frame *i* is centered at `T0 + i / 50` s. A plan's segments are a
   off); `render._Tape` decodes sequentially and restarts only to go backwards.
 - **AAC goes into Matroska audio (`.mka`), never `.m4a`, before mkvmerge**: mkvmerge ignores the MP4 edit list
   hiding the encoder priming and adds 21 ms of delay.
+- **Skip AAC priming that ffmpeg leaves in.** ffmpeg 8 decodes the 1024 priming samples of AAC in Matroska (and
+  reports a start time of -21 ms) where ffmpeg 9 drops them: every decode passes
+  `AudioStream.untrimmed_priming` as `skip`, start times come from `AudioStream.first_sample_time`, video seeks
+  subtract `MediaInfo.start_time`, and the ffmpeg fallback mux uses `-copyts`. CI runs ffmpeg 8 and catches a miss.
 - **Final offsets come from audio.** Video only places cuts and settles contested levels: the donor's own A/V sync can
   be off by 0.2–0.36 s and change mid-file.
 - Never re-encode video; never touch the inputs; `render()` leaves no partial output behind.
@@ -93,3 +97,5 @@ ratio. Feature frame *i* is centered at `T0 + i / 50` s. A plan's segments are a
 - `CHANGELOG.md` follows [Common Changelog](https://common-changelog.org/), with unreleased work under
   `## [Unreleased]`; groups `Changed`, `Added`, `Removed`, `Fixed`, in that order
 - Releases are tagged `vX.Y.Z`; `project.version` in `pyproject.toml` is the single source of truth
+- Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`: it checks the tag against `project.version` and
+  creates the GitHub release with that version's `CHANGELOG.md` section as notes; `/release` prepares all of it
