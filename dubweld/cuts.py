@@ -75,13 +75,13 @@ def localize(
     if len(ft) < 3:
         mid = (lo + hi) / 2
         return Cut(
-            a_time=mid + off_a,
-            b_time=mid,
+            target_time=mid + off_a,
+            donor_time=mid,
             offset_before=off_a,
             offset_after=off_b,
             confidence="low",
             evidence=[Evidence("midpoint", mid + off_a, "too little audio to compare")],
-            search=(lo, hi),
+            search=(lo + off_a, hi + off_a),
         )
     sa = scores_at_offset(matcher, donor, ft, off_a)
     sb = scores_at_offset(matcher, donor, ft, off_b)
@@ -128,13 +128,13 @@ def localize(
         confidence = "medium"
     else:
         confidence = "medium" if width <= SHARP_AUDIO and margin > 1.0 else "low"
-    b_time = chosen.a_time - off_a
+    b_time = chosen.target_time - off_a
     # In a down-jump the clue may mark where level b starts, the far end of the dropped material
     if drop > 0 and chosen.kind != "audio" and abs(b_time - estimate - drop) < abs(b_time - estimate):
         b_time -= drop
     return Cut(
-        a_time=b_time + off_a,
-        b_time=b_time,
+        target_time=b_time + off_a,
+        donor_time=b_time,
         offset_before=off_a,
         offset_after=off_b,
         confidence=confidence,

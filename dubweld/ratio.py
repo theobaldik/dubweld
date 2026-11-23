@@ -191,7 +191,7 @@ def choose_ratio(
         if start is None:
             raise AnalysisError(
                 "no speed ratio gives a usable match; are these two releases of the same video, and is the audio "
-                "track right (--a-track / --b-track)?"
+                "track right (--target-track / --donor-track)?"
             )
     cand = Candidate(name="estimated", ratio=start.ratio * (1 + start.slope))
     for _ in range(3):
@@ -212,7 +212,7 @@ def choose_ratio(
     if cand.flat < MIN_FLAT:
         raise AnalysisError(
             f"no speed ratio gives a usable match (best estimate {cand.ratio:.6f}); are these two releases of the "
-            "same video, and is the audio track right (--a-track / --b-track)?"
+            "same video, and is the audio track right (--target-track / --donor-track)?"
         )
     estimate = cand.ratio
     warning = (

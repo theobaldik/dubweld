@@ -18,14 +18,24 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Tools:
-    """Paths (or PATH names) of the external executables."""
+    """
+    The external executables, as paths or names looked up on PATH.
+
+    :param ffmpeg: ffmpeg, for decoding, encoding and muxing
+    :param ffprobe: ffprobe, for reading the inputs' streams
+    :param mkvmerge: mkvmerge (MKVToolNix), preferred for muxing; ffmpeg muxes when it is missing
+    """
 
     ffmpeg: str = "ffmpeg"
     ffprobe: str = "ffprobe"
     mkvmerge: str = "mkvmerge"
 
     def has(self, name: str) -> bool:
-        """Whether the executable configured under `name` can be found."""
+        """
+        Whether an executable can be found.
+
+        :param name: the field naming it: `ffmpeg`, `ffprobe` or `mkvmerge`
+        """
         return shutil.which(getattr(self, name)) is not None
 
 

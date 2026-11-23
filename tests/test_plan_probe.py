@@ -1,5 +1,6 @@
 """Plan files, ffprobe parsing, video helpers and cut evidence."""
 
+import json
 from fractions import Fraction
 from pathlib import Path
 
@@ -17,8 +18,8 @@ from dubweld.video import Clip, black_runs, match_offset, scene_cuts
 
 def make_plan() -> Plan:
     plan = Plan(
-        a=InputRef(path="target.mkv", audio_index=0, duration=1299.359, size=1, mtime=1700000000.123456),
-        b=InputRef(path="donor.m4v", audio_index=0, duration=1235.58),
+        target=InputRef(path="target.mkv", audio_index=0, duration=1299.359, size=1, mtime=1700000000.123456),
+        donor=InputRef(path="donor.m4v", audio_index=0, duration=1235.58),
         ratio=25 / (24000 / 1001),
         ratio_name="pal",
         ratio_method="snapped",
@@ -41,9 +42,9 @@ class TestPlan:
         plan.save(tmp_path / "synced.plan.json")
         loaded = Plan.load(tmp_path / "synced.plan.json")
         assert loaded.ratio == plan.ratio
-        assert loaded.a.mtime == plan.a.mtime
-        assert [(s.a_start, s.a_end, s.offset) for s in loaded.segments] == [
-            (s.a_start, s.a_end, s.offset) for s in plan.segments
+        assert loaded.target.mtime == plan.target.mtime
+        assert [(s.target_start, s.target_end, s.offset) for s in loaded.segments] == [
+            (s.target_start, s.target_end, s.offset) for s in plan.segments
         ]
         assert loaded.cuts[0].evidence[0].kind == "black"
         assert loaded.windows["scores"] == [0.7, 0.2]
@@ -56,18 +57,18 @@ class TestPlan:
     def test_donor_spans_follow_offsets(self) -> None:
         plan = make_plan()
         seg = plan.segments[1]
-        assert seg.b_start == pytest.approx((279.41 - 4.011) / plan.ratio)
-        assert seg.b_start * plan.ratio == pytest.approx(275.40, abs=0.01)
+        assert seg.donor_start == pytest.approx((279.41 - 4.011) / plan.ratio)
+        assert seg.donor_start * plan.ratio == pytest.approx(275.40, abs=0.01)
 
     def test_gaps(self) -> None:
         gaps = make_plan().gaps()
-        assert [round(g.a_end - g.a_start, 2) for g in gaps] == [1.55, 2.46, 2.27, 2.36, 2.44]
+        assert [round(g.target_end - g.target_start, 2) for g in gaps] == [1.55, 2.46, 2.27, 2.36, 2.44]
 
     def test_overlap_is_trimmed(self) -> None:
         plan = make_plan()
-        plan.segments[0].a_end = 280.0
+        plan.segments[0].target_end = 280.0
         plan.normalize()
-        assert plan.segments[0].a_end == plan.segments[1].a_start
+        assert plan.segments[0].target_end == plan.segments[1].target_start
 
     def test_hand_edit_is_picked_up(self, tmp_path: Path) -> None:
         make_plan().save(tmp_path / "synced.plan.json")
@@ -87,6 +88,22 @@ class TestPlan:
         d["version"] = 99
         with pytest.raises(PlanError):
             Plan.from_dict(d)
+
+    def test_json_names_target_and_donor(self, tmp_path: Path) -> None:
+        make_plan().save(tmp_path / "synced.plan.json")
+        d = json.loads((tmp_path / "synced.plan.json").read_text())
+        assert d["target"]["path"] == "target.mkv" and d["donor"]["path"] == "donor.m4v"
+        assert set(d["segments"][0]) >= {"target_start", "target_end", "offset", "donor_start", "donor_end"}
+        assert {"target_time", "donor_time"} <= set(d["cuts"][0])
+
+    def test_time_mapping(self) -> None:
+        plan = make_plan()
+        seg = plan.segments[1]
+        donor = seg.donor_start + 10.0
+        assert plan.to_target(donor) == pytest.approx(seg.target_start + 10.0 * plan.ratio)
+        assert plan.to_donor(plan.to_target(donor)) == pytest.approx(donor)
+        assert plan.to_donor(278.0) is None  # the gap at the first cut
+        assert plan.to_target(-1.0) is None
 
     def test_describe_mentions_cuts(self) -> None:
         text = make_plan().describe()

@@ -117,7 +117,9 @@ def click_times(pcm: np.ndarray, sr: int, threshold: float = 0.3) -> list[float]
 
 
 def plan_for(a: Path, b: Path, a_duration: float, b_duration: float, segments: list[Segment], ratio: float) -> Plan:
-    plan = Plan(a=InputRef(str(a), 0, a_duration), b=InputRef(str(b), 0, b_duration), ratio=ratio, segments=segments)
+    plan = Plan(
+        target=InputRef(str(a), 0, a_duration), donor=InputRef(str(b), 0, b_duration), ratio=ratio, segments=segments
+    )
     plan.normalize()
     return plan
 

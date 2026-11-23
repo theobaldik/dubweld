@@ -24,6 +24,7 @@ from dubweld.xcorr import DECIMATION, Matcher, OffsetTrack, offset_track, scores
 log = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str, float], None]
+"""Called with a step name (`speed ratio`, `offsets`) and the fraction of that step done, 0 to 1."""
 CHANGEPOINT_REACH = 120.0
 VIDEO_CLIP = 6.0
 VIDEO_MIN_CORRELATION = 0.6
@@ -39,16 +40,21 @@ class AnalyzeOptions:
     """
     Analysis settings.
 
-    :param a_track: audio stream of the target, counted among its audio streams
-    :param b_track: audio stream of the donor (the dub)
-    :param ratio: donor-to-target speed ratio, or None to choose automatically
-    :param use_video: use the videos to place cuts and settle ambiguous offsets
+    :param target_track: audio stream of the target, counted among its audio streams
+    :param donor_track: audio stream of the donor holding the dub, counted the same way
+    :param ratio: donor-to-target speed ratio (target time = donor time × ratio + offset), or None to choose a
+        standard one automatically
+    :param use_video: use the videos to place cuts and settle ambiguous offsets; never changes an offset by itself
     :param max_offset: only search offsets within ± this many seconds (faster on long files)
-    :param cache_dir: where decoded features are cached; None disables the cache
+    :param cache_dir: where decoded features are cached, keyed by file size and modification time; None disables
+        the cache
+    :param window: length of the matched donor windows, seconds; shorter finds shorter segments but matches less
+        reliably
+    :param hop: spacing of the windows, seconds
     """
 
-    a_track: int = 0
-    b_track: int = 0
+    target_track: int = 0
+    donor_track: int = 0
     ratio: float | None = None
     use_video: bool = True
     max_offset: float | None = None
@@ -139,18 +145,25 @@ def _refine_offset(track: OffsetTrack, idx: np.ndarray, level: float) -> tuple[f
 
 
 def analyze(
-    a_path: Path,
-    b_path: Path,
+    target: Path,
+    donor: Path,
     options: AnalyzeOptions | None = None,
     tools: Tools | None = None,
     progress: ProgressCallback | None = None,
 ) -> Plan:
     """
-    Work out how to lay the donor's audio onto the target.
+    Work out how to lay the donor's audio onto the target: the speed ratio, every offset and every cut.
 
-    :param a_path: target file (the video and timeline to keep)
-    :param b_path: donor file (has the dub)
-    :return: the plan; nothing is written
+    Takes a minute or two for an episode. Nothing is written except the feature cache (`options.cache_dir`).
+
+    :param target: the file whose video and timeline are kept
+    :param donor: the file holding the dub, a different release of the same video
+    :param options: analysis settings; the defaults when None
+    :param tools: paths of the external executables; found on PATH when None
+    :param progress: called as each step advances
+    :return: the plan, to pass to `render` or save with `Plan.save`
+    :raises ProbeError: when an input is missing, unreadable or lacks the requested audio stream
+    :raises ToolError: when ffmpeg or ffprobe is missing or fails
     :raises AnalysisError: when the files cannot be matched
     """
     options = options or AnalyzeOptions()
@@ -159,13 +172,15 @@ def analyze(
     def step(name: str) -> Callable[[float], None] | None:
         return (lambda f: progress(name, f)) if progress else None
 
-    a_info, b_info = probe(Path(a_path), tools), probe(Path(b_path), tools)
-    a_ref, b_ref = _input_ref(a_info, options.a_track), _input_ref(b_info, options.b_track)
-    if len(b_info.audio) > 1 and options.b_track == 0:
-        log.warning("%s has %d audio streams; using a:0 (choose with --b-track)", b_info.path.name, len(b_info.audio))
+    a_info, b_info = probe(Path(target), tools), probe(Path(donor), tools)
+    a_ref, b_ref = _input_ref(a_info, options.target_track), _input_ref(b_info, options.donor_track)
+    if len(b_info.audio) > 1 and options.donor_track == 0:
+        log.warning(
+            "%s has %d audio streams; using a:0 (choose with --donor-track)", b_info.path.name, len(b_info.audio)
+        )
 
-    fa = load_features(a_info, options.a_track, options.cache_dir, tools)
-    fb = load_features(b_info, options.b_track, options.cache_dir, tools)
+    fa = load_features(a_info, options.target_track, options.cache_dir, tools)
+    fb = load_features(b_info, options.donor_track, options.cache_dir, tools)
     matcher = Matcher(fa)
 
     fps_a = a_info.video.fps if a_info.video else None
@@ -184,8 +199,8 @@ def analyze(
     video: _Video | None = None
     if options.use_video and a_info.video and b_info.video:
         video = _Video(
-            VideoReader(a_info, options.a_track, 1.0, tools),
-            VideoReader(b_info, options.b_track, choice.ratio, tools),
+            VideoReader(a_info, options.target_track, 1.0, tools),
+            VideoReader(b_info, options.donor_track, choice.ratio, tools),
         )
 
     av_consistency = _av_consistency(levels, track, video) if video else None
@@ -257,7 +272,7 @@ def analyze(
         cuts.append(cut)
         log.info(
             "cut at %s: %+.3f -> %+.3f s (%s, %s)",
-            mmss(cut.a_time),
+            mmss(cut.target_time),
             cut.offset_before,
             cut.offset_after,
             cut.confidence,
@@ -266,8 +281,8 @@ def analyze(
 
     segments = _segments(offsets, counts, video_offsets, cuts, donor, a_ref.duration)
     plan = Plan(
-        a=a_ref,
-        b=b_ref,
+        target=a_ref,
+        donor=b_ref,
         ratio=choice.ratio,
         ratio_name=choice.name,
         ratio_method=choice.method,
@@ -285,7 +300,9 @@ def analyze(
         plan.warnings.append(choice.warning)
     for c in cuts:
         if c.confidence == "low":
-            plan.warnings.append(f"the cut at {mmss(c.a_time)} is a guess; listen there and edit the plan if needed")
+            plan.warnings.append(
+                f"the cut at {mmss(c.target_time)} is a guess; listen there and edit the plan if needed"
+            )
     for lv in kept:
         if lv.crispness < 0.5:
             plan.warnings.append(f"offset {lv.offset:+.3f} s is a loose match (crispness {lv.crispness:.2f})")
@@ -375,10 +392,12 @@ def _segments(
     donor_end = donor.duration
     segments: list[Segment] = []
     for j, off in enumerate(offsets):
-        b0 = 0.0 if j == 0 else cuts[j - 1].b_time + max(0.0, offsets[j - 1] - off)
-        b1 = donor_end if j == len(offsets) - 1 else cuts[j].b_time
+        b0 = 0.0 if j == 0 else cuts[j - 1].donor_time + max(0.0, offsets[j - 1] - off)
+        b1 = donor_end if j == len(offsets) - 1 else cuts[j].donor_time
         a0, a1 = max(0.0, b0 + off), min(a_duration, b1 + off)
         if a1 - a0 <= 0.0:
             continue
-        segments.append(Segment(a_start=a0, a_end=a1, offset=off, windows=counts[j], video_offset=video_offsets[j]))
+        segments.append(
+            Segment(target_start=a0, target_end=a1, offset=off, windows=counts[j], video_offset=video_offsets[j])
+        )
     return segments

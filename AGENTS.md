@@ -53,8 +53,11 @@
 | `cli.py` | argparse front end; progress on stderr, summaries on stdout |
 
 Time convention everywhere: **target time = donor time × ratio + offset**. "Stretched" donor time means donor time ×
-ratio. Feature frame *i* is centered at `T0 + i / 50` s. A plan's segments are authoritative by `a_start`, `a_end`,
-`offset`; `b_start` / `b_end` are recomputed on load.
+ratio. Feature frame *i* is centered at `T0 + i / 50` s. A plan's segments are authoritative by `target_start`,
+`target_end`, `offset`; `donor_start` / `donor_end` are recomputed on load.
+
+The public API (`dubweld.__all__`, the CLI flags, the plan JSON) says *target* and *donor*; private helpers and local
+math may keep short `a` / `b` names (`a_info`, `fb`, `off_a`).
 
 ## Invariants (each one fixed a real bug)
 
@@ -101,8 +104,15 @@ ratio. Feature frame *i* is centered at `T0 + i / 50` s. A plan's segments are a
 - `logging.getLogger(__name__)`; the CLI prints summaries to stdout, everything else is logging
 - US English everywhere: code, identifiers, comments, docs, CLI messages, the changelog and commit messages
   (*analyze*, *color*, *behavior*, *license*, *normalize*, *canceled*)
-- Comments only for a non-obvious why; public library functions get a short docstring with units and `:param:`
-  fields where they help
+- Comments only for a non-obvious why
+- The public library API is the exception: every module, and everything in `dubweld.__all__` with its public methods,
+  gets a brief docstring saying what it is or does, with units (seconds, target or donor time) and gotchas — no
+  restating of names or signatures
+- Docstrings follow PEP 257: `"""One line."""`, or the quotes on their own lines around a multiline one. A
+  docstring of a callable taking arguments or returning a value lists them as reST fields — `:param name:`,
+  `:return:`, `:raises Error:` — and a class (dataclass) documents its constructor's parameters
+- `README.md` is also the PyPI page: links and images use absolute URLs, and no GitHub-only markdown (alerts,
+  Mermaid)
 
 ## Commits and changelog
 
@@ -113,4 +123,5 @@ ratio. Feature frame *i* is centered at `T0 + i / 50` s. A plan's segments are a
   `## [Unreleased]`; groups `Changed`, `Added`, `Removed`, `Fixed`, in that order
 - Releases are tagged `vX.Y.Z`; `project.version` in `pyproject.toml` is the single source of truth
 - Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`: it checks the tag against `project.version` and
-  creates the GitHub release with that version's `CHANGELOG.md` section as notes; `/release` prepares all of it
+  creates the GitHub release with that version's `CHANGELOG.md` section as notes, then publishes the package to PyPI
+  (Trusted Publishing from the `pypi` environment, no token); `/release` prepares all of it

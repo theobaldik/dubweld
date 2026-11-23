@@ -71,10 +71,12 @@ between the mixes. The matches are accurate to about a millisecond.
 ## Install
 
 ```console
-uv tool install git+https://github.com/theobaldik/dubweld
+uv tool install dubweld
 # or
-pipx install git+https://github.com/theobaldik/dubweld
+pipx install dubweld
 ```
+
+For the latest development version, install from `git+https://github.com/theobaldik/dubweld` instead.
 
 ## Usage
 
@@ -82,17 +84,17 @@ pipx install git+https://github.com/theobaldik/dubweld
 dubweld run     TARGET DONOR -o OUT.mkv [options]       # analyze + render + verify
 dubweld analyze TARGET DONOR [-o plan.json] [--report plan.html] [analysis options]
 dubweld render  TARGET DONOR plan.json -o OUT.mkv [render options]
-dubweld verify  TARGET OUT.mkv [--a-track N] [--track N]
+dubweld verify  TARGET OUT.mkv [--target-track N] [--dub-track N]
 ```
 
 Analysis options:
 
-| Option                       | Meaning                                                                                                                                          |
-|------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
-| `--a-track N`, `--b-track N` | audio stream of the target / donor, counted among audio streams (default 0)                                                                      |
-| `--ratio R`                  | `auto` (default), `pal` (25/23.976), `pal24` (25/24), `ntsc` (24/23.976), `1`, any of them with `-inv`, a number, or a fraction like `25/23.976` |
-| `--no-video`                 | don't use the videos to place cuts                                                                                                               |
-| `--max-offset S`             | only search offsets within ±S seconds (faster on long files)                                                                                     |
+| Option                                | Meaning                                                                                                                                          |
+|---------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--target-track N`, `--donor-track N` | audio stream of the target / donor, counted among audio streams (default 0)                                                                      |
+| `--ratio R`                           | `auto` (default), `pal` (25/23.976), `pal24` (25/24), `ntsc` (24/23.976), `1`, any of them with `-inv`, a number, or a fraction like `25/23.976` |
+| `--no-video`                          | don't use the videos to place cuts                                                                                                               |
+| `--max-offset S`                      | only search offsets within ±S seconds (faster on long files)                                                                                     |
 
 Render options:
 
@@ -116,8 +118,44 @@ Exit codes: 0 ok, 1 error, 2 usage error, 3 verification failed, 130 interrupted
 
 1. Run `dubweld run`, or `dubweld analyze` followed by `dubweld render`.
 2. Listen around the cuts it prints, and in the stretches the verification lists as unchecked.
-3. If something is off, edit the plan. The segments' `a_start`, `a_end` and `offset` (target seconds) are what
+3. If something is off, edit the plan. The segments' `target_start`, `target_end` and `offset` (seconds) are what
    renders; everything else is informational. Then re-render with `dubweld render TARGET DONOR plan.json -o synced.mkv`.
+
+## Using as a library
+
+The `dubweld` package holds the whole pipeline, without global state, configuration files or environment variables:
+
+```console
+pip install dubweld          # or `uv add dubweld`
+```
+
+```python
+from pathlib import Path
+
+from dubweld import DubweldError, RenderOptions, analyze, render, verify
+
+target, donor = Path("target.mkv"), Path("donor.m4v")
+try:
+    plan = analyze(target, donor)
+    plan.save(Path("synced.plan.json"))  # editable; Plan.load() reads it back
+    output = render(plan, target, donor, Path("synced.mkv"), RenderOptions(language="cze", name="Czech dub"))
+    report = verify(target, output, pieces=[(s.target_start, s.target_end) for s in plan.segments])
+    print(report.verdict)  # pass, warn or fail; report.describe() says why
+except DubweldError as e:
+    ...  # the inputs are untouched and no partial output is left behind
+```
+
+- `analyze()` takes `AnalyzeOptions` (audio streams, a forced ratio, `use_video`, a feature `cache_dir`) and returns
+  a `Plan`: the speed ratio, the `segments` with their offsets, and the `cuts` with their evidence. Times are
+  seconds; target time = donor time × `plan.ratio` + the segment's offset.
+- `plan.to_target(donor_time)` and `plan.to_donor(target_time)` map times between the releases, for example to
+  retime the donor's subtitles. They return `None` where material isn't played.
+- `write_report(path, plan, report)` writes the HTML report.
+- Errors are `ProbeError`, `ToolError`, `AnalysisError`, `PlanError` and `RenderError`, all subclasses of
+  `DubweldError`.
+- `ffmpeg` and `ffprobe` must be on `PATH`, or pass `Tools(ffmpeg=..., ffprobe=..., mkvmerge=...)` to each call.
+- Long steps take a `progress` callback. The library logs through `logging` under `dubweld.*` and configures no
+  handlers.
 
 ## Limitations
 
@@ -139,4 +177,4 @@ The approach builds on the experience of syncing a real dub with
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/theobaldik/dubweld/blob/master/LICENSE)

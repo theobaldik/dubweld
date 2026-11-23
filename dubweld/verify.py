@@ -40,10 +40,30 @@ MAX_BIAS_MS = 10.0
 @dataclass
 class VerifyReport:
     """
-    How well a rendered dub matches the target at offset 0. Residuals are seconds; negative means the dub is late.
+    How well a rendered dub matches the target at offset 0, judged on 8 s windows every 4 s.
 
-    `verdict` is pass, warn or fail. A fail means a consistent non-zero offset (a crisp cluster) somewhere; a cluster
-    in the dialogue band where the dub matches nearby (`doubtful`) only warns.
+    Only the shared music and effects can be checked: stretches of dialogue match loosely or not at all, so read
+    `uncovered` and listen there. Times are target seconds; residuals are seconds, negative where the dub is late.
+
+    :param verdict: `pass`, `warn` or `fail`; a fail means a consistent non-zero offset somewhere (`offsync`), while
+        such a cluster in the dialogue band where the dub matches nearby (`doubtful`) only warns
+    :param median_ms: median absolute residual of the confident windows, milliseconds (NaN when none matched)
+    :param max_ms: largest absolute residual of the confident windows, milliseconds
+    :param bias_ms: median signed residual, milliseconds: a constant delay of the whole dub
+    :param confident: windows matching at offset 0 with a high score
+    :param matched: windows matching at offset 0 (within ±40 ms)
+    :param active: windows with enough sound in the dub to check
+    :param windows: all windows
+    :param coverage: `matched` / `active`
+    :param uncovered: `(start, end)` stretches over a minute with nothing matching, to listen to
+    :param offsync: `(start, end, residual, windows)` of each consistently off stretch
+    :param outliers: `(time, residual, score)` of isolated confident windows off by more than 40 ms, usually noise
+    :param doubtful: `(start, end, residual, windows)` like `offsync`, but probably dialogue
+    :param dialogue: windows showing the loose dialogue match (the dub 0.1-0.55 s late), ignored
+    :param messages: explanations of the verdict
+    :param times: center of every window
+    :param residuals: residual of every window
+    :param scores: normalized correlation of every window (1 = identical)
     """
 
     verdict: str
@@ -154,30 +174,39 @@ def _crisp_clusters(
 
 
 def verify(
-    a_path: Path,
-    out_path: Path,
-    a_track: int = 0,
-    track: int | None = None,
+    target: Path,
+    output: Path,
+    target_track: int = 0,
+    dub_track: int | None = None,
     tools: Tools | None = None,
     cache_dir: Path | None = None,
     progress: Callable[[float], None] | None = None,
     pieces: list[tuple[float, float]] | None = None,
 ) -> VerifyReport:
     """
-    Re-match a rendered dub against the target at ratio 1.
+    Check a rendered dub against the target: synced right, it matches at offset 0 wherever it has music and effects.
 
-    :param a_track: the target's audio stream to compare with
-    :param track: audio stream of `out_path` holding the dub; None takes its last audio stream
-    :param pieces: optional target-time spans (s) each played continuously at one offset (the plan's segments)
+    :param target: the file the dub was synced to
+    :param output: the file holding the dub, usually `render`'s output
+    :param target_track: the target's audio stream to compare with, counted among its audio streams
+    :param dub_track: the audio stream of `output` holding the dub; None takes its last audio stream
+    :param tools: paths of the external executables; found on PATH when None
+    :param cache_dir: where the target's features are cached; None disables the cache
+    :param progress: called with the fraction done, 0 to 1
+    :param pieces: target-time spans (seconds) each played at one offset, `(target_start, target_end)` of the plan's
+        segments; with them, a dialogue-like cluster in a segment that matches elsewhere only warns
+    :return: the report; print `describe()` for a summary
+    :raises ProbeError: when a file can't be read, lacks the stream, or both name the same stream of the same file
+    :raises ToolError: when ffmpeg or ffprobe is missing or fails
     """
     tools = tools or Tools()
-    a_info, o_info = probe(Path(a_path), tools), probe(Path(out_path), tools)
-    if track is None:
-        track = len(o_info.audio) - 1
-    if Path(a_path).resolve() == Path(out_path).resolve() and track == a_track:
+    a_info, o_info = probe(Path(target), tools), probe(Path(output), tools)
+    if dub_track is None:
+        dub_track = len(o_info.audio) - 1
+    if Path(target).resolve() == Path(output).resolve() and dub_track == target_track:
         raise ProbeError("comparing a track with itself")
-    fa = load_features(a_info, a_track, cache_dir, tools)
-    fo = load_features(o_info, track, None, tools)
+    fa = load_features(a_info, target_track, cache_dir, tools)
+    fo = load_features(o_info, dub_track, None, tools)
     matcher = Matcher(fa)
     glob = offset_track(matcher, fo, WINDOW, HOP, progress=progress)
     t, starts, m = glob.times, glob.starts, glob.window_frames

@@ -22,7 +22,7 @@ def check_plan(plan: Plan, rel: Release) -> None:
     for seg, (a0, a1, off) in zip(plan.segments, rel.truth):
         assert seg.offset == pytest.approx(off, abs=OFFSET_TOLERANCE), plan.describe()
     for cut, (_, a_end, off), b_cut in zip(plan.cuts, rel.truth, rel.cuts_b):
-        assert cut.b_time == pytest.approx(b_cut, abs=CUT_TOLERANCE), plan.describe()
+        assert cut.donor_time == pytest.approx(b_cut, abs=CUT_TOLERANCE), plan.describe()
 
 
 @pytest.fixture(scope="module")
@@ -38,7 +38,7 @@ class TestActBreaks:
         check_plan(act_plan, act_breaks)
 
     def test_gaps_match_the_extra_material(self, act_plan: Plan) -> None:
-        inner = [round(g.a_end - g.a_start, 1) for g in act_plan.gaps(0.5)][: len(act_plan.cuts)]
+        inner = [round(g.target_end - g.target_start, 1) for g in act_plan.gaps(0.5)][: len(act_plan.cuts)]
         assert inner == [2.5, 15.0, 3.0]
 
     def test_render_and_verify(self, act_plan: Plan, act_breaks: Release, tmp_path: Path) -> None:
@@ -68,8 +68,8 @@ def test_donor_with_extra_material(tmp_path: Path) -> None:
     assert plan.segments[1].offset == pytest.approx(-4.0, abs=OFFSET_TOLERANCE)
     assert plan.cuts[0].jump == pytest.approx(-4.0, abs=0.01)
     # The target stays continuous: the first segment ends where the second starts, near 80 s
-    assert plan.segments[0].a_end == pytest.approx(80.0, abs=CUT_TOLERANCE), plan.describe()
-    assert plan.segments[1].a_start == pytest.approx(plan.segments[0].a_end, abs=0.01)
+    assert plan.segments[0].target_end == pytest.approx(80.0, abs=CUT_TOLERANCE), plan.describe()
+    assert plan.segments[1].target_start == pytest.approx(plan.segments[0].target_end, abs=0.01)
     out = render(plan, rel.a, rel.b, tmp_path / "synced.mkv", RenderOptions(codec="flac"))
     assert verify(rel.a, out).verdict == "pass"
 
@@ -82,7 +82,7 @@ def test_cut_in_silence(tmp_path: Path) -> None:
     assert [round(s.offset, 3) for s in plan.segments] == [pytest.approx(0.0, abs=0.005), pytest.approx(2.5, abs=0.005)]
     cut = plan.cuts[0]
     assert cut.evidence[0].kind == "silence", plan.describe()
-    assert silent[0] < cut.a_time < silent[1] - 2.5
+    assert silent[0] < cut.target_time < silent[1] - 2.5
     assert cut.confidence in ("medium", "high")
 
 
@@ -94,7 +94,7 @@ def test_video_pins_the_cut(tmp_path: Path) -> None:
     cut = plan.cuts[0]
     assert cut.evidence[0].kind == "black", plan.describe()
     assert cut.confidence == "high"
-    assert cut.b_time == pytest.approx(rel.cuts_b[0], abs=0.1)
+    assert cut.donor_time == pytest.approx(rel.cuts_b[0], abs=0.1)
     for seg in plan.segments:
         assert seg.video_offset == pytest.approx(seg.offset, abs=0.05)
 

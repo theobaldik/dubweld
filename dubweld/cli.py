@@ -91,8 +91,8 @@ def _language(text: str) -> str:
 
 def _analyze_args(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group("analysis")
-    g.add_argument("--a-track", type=_track, default=0, metavar="N", help="audio stream of the target (default 0)")
-    g.add_argument("--b-track", type=_track, default=0, metavar="N", help="audio stream of the donor (default 0)")
+    g.add_argument("--target-track", type=_track, default=0, metavar="N", help="audio stream of the target (default 0)")
+    g.add_argument("--donor-track", type=_track, default=0, metavar="N", help="audio stream of the donor (default 0)")
     g.add_argument(
         "--ratio",
         type=_ratio,
@@ -170,9 +170,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("verify", help="check a rendered file", description="Check a dub track against the target.")
     p.add_argument("target", type=Path)
     p.add_argument("output", type=Path, help="file holding the dub")
-    p.add_argument("--a-track", type=_track, default=0, metavar="N", help="target audio stream (default 0)")
+    p.add_argument("--target-track", type=_track, default=0, metavar="N", help="target audio stream (default 0)")
     p.add_argument(
-        "--track",
+        "--dub-track",
         type=_track,
         default=None,
         metavar="N",
@@ -204,8 +204,8 @@ def _setup_logging(console: Console, verbose: int, quiet: bool) -> None:
 
 def _options(args: argparse.Namespace, cache_dir: Path | None) -> AnalyzeOptions:
     return AnalyzeOptions(
-        a_track=args.a_track,
-        b_track=args.b_track,
+        target_track=args.target_track,
+        donor_track=args.donor_track,
         ratio=args.ratio,
         use_video=not args.no_video,
         max_offset=args.max_offset,
@@ -234,12 +234,18 @@ def _check_inputs(*paths: Path) -> None:
 
 
 def _verify_and_report(
-    target: Path, output: Path, plan: Plan, a_track: int, cache_dir: Path | None, report_path: Path, console: Console
+    target: Path,
+    output: Path,
+    plan: Plan,
+    target_track: int,
+    cache_dir: Path | None,
+    report_path: Path,
+    console: Console,
 ) -> VerifyReport:
     log.info("verifying %s", output.name)
-    pieces = [(seg.a_start, seg.a_end) for seg in plan.segments]
+    pieces = [(seg.target_start, seg.target_end) for seg in plan.segments]
     report = verify(
-        target, output, a_track=a_track, cache_dir=cache_dir, progress=console.step("verify"), pieces=pieces
+        target, output, target_track=target_track, cache_dir=cache_dir, progress=console.step("verify"), pieces=pieces
     )
     console.end_line()
     print(report.describe())
@@ -273,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
             _check_inputs(args.target, args.donor, args.plan)
             check_output(args.output)
             plan = Plan.load(args.plan)
-            for ref, path in ((plan.a, args.target), (plan.b, args.donor)):
+            for ref, path in ((plan.target, args.target), (plan.donor, args.donor)):
                 if ref.size and path.stat().st_size != ref.size:
                     log.warning("%s differs from the file the plan was made for (%s)", path.name, Path(ref.path).name)
             render(plan, args.target, args.donor, args.output, _render_options(args), tools, console.step("render"))
@@ -283,14 +289,14 @@ def main(argv: list[str] | None = None) -> int:
                 return EXIT_OK
             report_path = args.report or args.output.with_suffix(".html")
             report = _verify_and_report(
-                args.target, args.output, plan, plan.a.audio_index, cache_dir, report_path, console
+                args.target, args.output, plan, plan.target.audio_index, cache_dir, report_path, console
             )
             return EXIT_VERIFY_FAILED if report.verdict == "fail" else EXIT_OK
 
         if args.command == "verify":
             _check_inputs(args.target, args.output)
             report = verify(
-                args.target, args.output, args.a_track, args.track, tools, cache_dir, console.step("verify")
+                args.target, args.output, args.target_track, args.dub_track, tools, cache_dir, console.step("verify")
             )
             console.end_line()
             print(report.describe())
@@ -315,7 +321,7 @@ def main(argv: list[str] | None = None) -> int:
             console.end_line()
             log.info("wrote %s", args.output)
             report = _verify_and_report(
-                args.target, args.output, plan, args.a_track, cache_dir, args.output.with_suffix(".html"), console
+                args.target, args.output, plan, args.target_track, cache_dir, args.output.with_suffix(".html"), console
             )
             return EXIT_VERIFY_FAILED if report.verdict == "fail" else EXIT_OK
     except KeyboardInterrupt:

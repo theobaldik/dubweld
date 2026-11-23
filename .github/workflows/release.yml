@@ -45,3 +45,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md
+
+  pypi:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      # Trusted Publishing: PyPI trusts this workflow, no token is stored
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          # Track the uv version in tests.yml
+          version: "0.13.8"
+          python-version: "3.14"
+
+      - run: uv build
+
+      - run: uv publish --trusted-publishing always

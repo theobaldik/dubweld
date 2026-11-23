@@ -36,10 +36,15 @@ class RenderOptions:
     """
     Render and mux settings.
 
+    :param language: language tag of the dub track, ISO 639-2 (`cze`) or BCP 47 (`cs`); `und` when unknown
+    :param name: track name of the dub; `Dub` when empty
     :param fill: what plays where the donor has nothing: `silence` or `original` (the target's own audio)
-    :param pitch: `shift` resamples (undoes a PAL speed-up's pitch rise), `keep` time-stretches (pitch-corrected donor)
+    :param codec: codec of the dub track: `aac`, `opus` or `flac`
+    :param bitrate: ffmpeg bitrate such as `192k`; the codec's default when empty (ignored for FLAC)
     :param default: which audio track is flagged default in the output: `original` or `dub`
+    :param pitch: `shift` resamples (undoes a PAL speed-up's pitch rise), `keep` time-stretches (pitch-corrected donor)
     :param crossfade: length of the raised-cosine crossfade at every join, seconds
+    :param force: overwrite an existing output
     """
 
     language: str = "und"
@@ -193,10 +198,10 @@ def render_dub(
     if options.fill not in ("silence", "original"):
         raise RenderError(f"unknown fill {options.fill!r}")
     b_info = probe(Path(b_path), tools)
-    b_stream = b_info.audio_stream(plan.b.audio_index)
+    b_stream = b_info.audio_stream(plan.donor.audio_index)
     channels = b_stream.channels or 2
     sr = SAMPLE_RATE
-    total = int(round(plan.a.duration * sr))
+    total = int(round(plan.target.duration * sr))
     pad = max(1, int(round(options.crossfade * sr / 2)))
     filt = speed_filter(plan.ratio, options.pitch, sr, tools)
 
@@ -210,7 +215,7 @@ def render_dub(
         # Donor tape sample m is stretched donor time m / sr; target sample n = m + offset * sr
         donor = _Tape(
             lambda: open_decoder(
-                b_path, plan.b.audio_index, sr, channels, filt, tools=tools, skip=b_stream.untrimmed_priming
+                b_path, plan.donor.audio_index, sr, channels, filt, tools=tools, skip=b_stream.untrimmed_priming
             ),
             channels,
             "the donor",
@@ -218,10 +223,10 @@ def render_dub(
         tapes.append(donor)
         target: _Tape | None = None
         if options.fill == "original":
-            a_skip = probe(Path(a_path), tools).audio_stream(plan.a.audio_index).untrimmed_priming
+            a_skip = probe(Path(a_path), tools).audio_stream(plan.target.audio_index).untrimmed_priming
             target = _Tape(
                 lambda: open_decoder(
-                    a_path, plan.a.audio_index, sr, channels, f"aresample={sr}", tools=tools, skip=a_skip
+                    a_path, plan.target.audio_index, sr, channels, f"aresample={sr}", tools=tools, skip=a_skip
                 ),
                 channels,
                 "the target",
@@ -245,8 +250,8 @@ def render_dub(
 def _pieces(plan: Plan, total: int, sr: int, donor: _Tape, target: _Tape | None) -> list[_Piece]:
     pieces: list[_Piece] = []
     cursor = 0
-    for seg in sorted(plan.segments, key=lambda s: s.a_start):
-        n0, n1 = int(round(seg.a_start * sr)), min(total, int(round(seg.a_end * sr)))
+    for seg in sorted(plan.segments, key=lambda s: s.target_start):
+        n0, n1 = int(round(seg.target_start * sr)), min(total, int(round(seg.target_end * sr)))
         if target is not None and n0 > cursor:
             pieces.append(_Piece(cursor, n0, target, 0))
         pieces.append(_Piece(n0, n1, donor, int(round(seg.offset * sr))))
@@ -374,8 +379,8 @@ def check_output(output: Path) -> None:
 
 def render(
     plan: Plan,
-    a_path: Path,
-    b_path: Path,
+    target: Path,
+    donor: Path,
     output: Path,
     options: RenderOptions | None = None,
     tools: Tools | None = None,
@@ -385,8 +390,23 @@ def render(
     """
     Render the dub and write `output`: the target with every track copied plus the dub. Video is never re-encoded.
 
+    Nothing is written but `output` (and `keep_audio`): the work happens in a temporary directory next to `output`,
+    and on failure no partial output is left behind.
+
+    :param plan: the plan from `analyze` or `Plan.load`
+    :param target: the file whose video and timeline are kept (the plan's target)
+    :param donor: the file the dub comes from (the plan's donor)
+    :param output: the file to write, Matroska (`.mkv` or `.mka`)
+    :param options: render and mux settings; the defaults when None
+    :param tools: paths of the external executables; found on PATH when None
+    :param progress: called with the fraction of the dub rendered, 0 to 1
     :param keep_audio: also keep the encoded dub track at this path
-    :raises RenderError: on failure; no partial output is left behind
+    :return: `output`
+    :raises RenderError: when the output exists (unless `options.force`), is one of the inputs or is not Matroska,
+        or when rendering or muxing fails
+    :raises PlanError: when the plan can't be rendered
+    :raises ProbeError: when an input can't be read
+    :raises ToolError: when ffmpeg or ffprobe is missing or fails
     """
     options = options or RenderOptions()
     tools = tools or Tools()
@@ -394,17 +414,17 @@ def render(
     check_output(output)
     if output.exists() and not options.force:
         raise RenderError(f"{output} exists (use --force to overwrite)")
-    if output.resolve() in (Path(a_path).resolve(), Path(b_path).resolve()):
+    if output.resolve() in (Path(target).resolve(), Path(donor).resolve()):
         raise RenderError("the output must not be one of the inputs")
     plan.validate()
     output.parent.mkdir(parents=True, exist_ok=True)
     suffix = CODECS.get(options.codec, ("", "", ".mka"))[2]
-    a_start = probe(Path(a_path), tools).audio_stream(plan.a.audio_index).first_sample_time
+    first_sample = probe(Path(target), tools).audio_stream(plan.target.audio_index).first_sample_time
     with tempfile.TemporaryDirectory(prefix=".dubweld-", dir=output.parent) as tmp:
         dub = Path(tmp) / f"dub{suffix}"
         partial = Path(tmp) / f"out{output.suffix.lower()}"
-        render_dub(plan, a_path, b_path, dub, options, tools, progress)
-        mux(Path(a_path), dub, partial, options, delay=a_start, tools=tools)
+        render_dub(plan, target, donor, dub, options, tools, progress)
+        mux(Path(target), dub, partial, options, delay=first_sample, tools=tools)
         if keep_audio is not None:
             shutil.copyfile(dub, keep_audio)
         partial.replace(output)

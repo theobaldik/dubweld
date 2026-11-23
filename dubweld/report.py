@@ -148,7 +148,7 @@ def _score_class(s: float) -> str:
 def _segment_offset_at(plan: Plan, b_stretched: float) -> float:
     best = plan.segments[0]
     for seg in plan.segments:
-        if seg.b_start * plan.ratio <= b_stretched:
+        if seg.donor_start * plan.ratio <= b_stretched:
             best = seg
     return best.offset
 
@@ -161,17 +161,17 @@ def offsets_svg(plan: Plan) -> tuple[str, int]:
     s = np.asarray(w.get("scores", []), dtype=float)
     offs = [seg.offset for seg in plan.segments]
     y0, y1 = min(offs) - 0.75, max(offs) + 0.5
-    ax = _Axes(0, plan.a.duration, y0, y1)
+    ax = _Axes(0, plan.target.duration, y0, y1)
     out = [f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="Offset of every analysis window over target time">']
     for g in plan.gaps(0.05):
         out.append(
-            f'<rect class="gap" x="{ax.x(g.a_start):.1f}" y="{MT}" width="{max(1.0, ax.x(g.a_end) - ax.x(g.a_start)):.1f}" height="{H - MT - MB}"/>'
+            f'<rect class="gap" x="{ax.x(g.target_start):.1f}" y="{MT}" width="{max(1.0, ax.x(g.target_end) - ax.x(g.target_start)):.1f}" height="{H - MT - MB}"/>'
         )
     out += _frame(ax, _ticks(y0, y1), lambda v: f"{v:+.1f} s", "offset (s)")
     for seg in plan.segments:
         y = ax.y(seg.offset)
         out.append(
-            f'<line class="level" x1="{ax.x(seg.a_start):.1f}" x2="{ax.x(seg.a_end):.1f}" y1="{y:.1f}" y2="{y:.1f}"/>'
+            f'<line class="level" x1="{ax.x(seg.target_start):.1f}" x2="{ax.x(seg.target_end):.1f}" y1="{y:.1f}" y2="{y:.1f}"/>'
         )
     off_range = 0
     order = np.argsort(s)
@@ -186,12 +186,12 @@ def offsets_svg(plan: Plan) -> tuple[str, int]:
             f"<title>{mmss(at)}  offset {o[i]:+.4f} s  score {s[i]:.2f}</title></circle>"
         )
     for c in plan.cuts:
-        x = ax.x(c.a_time)
+        x = ax.x(c.target_time)
         out.append(f'<line class="cut" x1="{x:.1f}" x2="{x:.1f}" y1="{MT}" y2="{H - MB}"/>')
         right = x > W - MR - 60
         anchor, dx = ("end", -4) if right else ("start", 4)
         out.append(
-            f'<text class="cutlabel" x="{x + dx:.1f}" y="{MT + 10}" text-anchor="{anchor}">{mmss(c.a_time)}</text>'
+            f'<text class="cutlabel" x="{x + dx:.1f}" y="{MT + 10}" text-anchor="{anchor}">{mmss(c.target_time)}</text>'
         )
     out.append("</svg>")
     return "\n".join(out), off_range
@@ -205,7 +205,7 @@ def residual_svg(plan: Plan) -> str:
     s = np.asarray(w.get("scores", []), dtype=float)
     y0, y1 = -600.0, 200.0
     h = 240
-    ax = _Axes(0, plan.a.duration, y0, y1, h)
+    ax = _Axes(0, plan.target.duration, y0, y1, h)
     out = [f'<svg viewBox="0 0 {W} {h}" role="img" aria-label="Residual of each window against its segment offset">']
     out += _frame(ax, _ticks(y0, y1, 8), lambda v: f"{v:+.0f}", "window offset - segment offset (ms)")
     for i in np.argsort(s):
@@ -254,7 +254,7 @@ def _legend(extra: str = "") -> str:
 
 def build_html(plan: Plan, report: VerifyReport | None = None) -> str:
     """The whole report page as one HTML string (no external resources)."""
-    a_name, b_name = Path(plan.a.path).name, Path(plan.b.path).name
+    a_name, b_name = Path(plan.target.path).name, Path(plan.donor.path).name
     plot, off_range = offsets_svg(plan)
     parts = [
         "<!doctype html><html lang=en><head><meta charset=utf-8>",
@@ -298,7 +298,7 @@ def build_html(plan: Plan, report: VerifyReport | None = None) -> str:
             '<p class="sub">Each window of the rendered dub re-matched against the target. Green band: within '
             f"±{NEAR_ZERO * 1000:.0f} ms. Readings between {DIALOGUE[1] * 1000:.0f} and {DIALOGUE[0] * 1000:.0f} ms "
             "are the loose dialogue match.</p>",
-            f'<div class="card">{verify_svg(report, plan.a.duration)}{_legend()}</div>',
+            f'<div class="card">{verify_svg(report, plan.target.duration)}{_legend()}</div>',
         ]
         notes = [
             f"{mmss(a)} - {mmss(b)} ({b - a:.0f} s) has no match to check; listen there" for a, b in report.uncovered
@@ -318,8 +318,8 @@ def build_html(plan: Plan, report: VerifyReport | None = None) -> str:
             parts.append('<ul class="notes">' + "".join(f"<li>{_esc(n)}</li>" for n in notes) + "</ul>")
 
     rows = "".join(
-        f"<tr><td>{i}</td><td>{mmss(s.a_start)}</td><td>{mmss(s.a_end)}</td><td>{s.offset:+.4f} s</td>"
-        f"<td>{mmss(s.b_start)} - {mmss(s.b_end)}</td><td>{s.windows}</td>"
+        f"<tr><td>{i}</td><td>{mmss(s.target_start)}</td><td>{mmss(s.target_end)}</td><td>{s.offset:+.4f} s</td>"
+        f"<td>{mmss(s.donor_start)} - {mmss(s.donor_end)}</td><td>{s.windows}</td>"
         f"<td>{'' if s.video_offset is None else f'{s.offset - s.video_offset:+.3f} s'}</td></tr>"
         for i, s in enumerate(plan.segments, 1)
     )
@@ -334,7 +334,7 @@ def build_html(plan: Plan, report: VerifyReport | None = None) -> str:
             evidence = "<br>".join(f"{_esc(e.kind)}: {_esc(e.detail)}" for e in c.evidence)
             what = f"+{c.jump:.2f} s gap" if c.jump >= 0 else f"{c.jump:.2f} s of donor dropped"
             rows += (
-                f"<tr><td>{mmss(c.a_time)}</td><td>{c.offset_before:+.3f} → {c.offset_after:+.3f}</td>"
+                f"<tr><td>{mmss(c.target_time)}</td><td>{c.offset_before:+.3f} → {c.offset_after:+.3f}</td>"
                 f'<td>{what}</td><td><span class="pill {c.confidence}">{c.confidence}</span></td><td>{evidence}</td></tr>'
             )
         parts += [
@@ -362,5 +362,11 @@ def build_html(plan: Plan, report: VerifyReport | None = None) -> str:
 
 
 def write_report(path: Path, plan: Plan, report: VerifyReport | None = None) -> None:
-    """Write the HTML report to `path`."""
+    """
+    Write a self-contained HTML report: the offset plot, segments, cuts with their evidence, and the verification.
+
+    :param path: the HTML file to write
+    :param plan: the plan to show
+    :param report: the verification of the rendered dub, if any
+    """
     Path(path).write_text(build_html(plan, report), encoding="utf-8")

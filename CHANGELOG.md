@@ -16,3 +16,5 @@ _Initial release._
 - Mux the dub into a copy of the target without re-encoding anything else
 - Verify the rendered dub automatically and list the stretches it could not check
 - Write an editable JSON plan, and a self-contained HTML report
+- Use dubweld as a Python library: `analyze`, `render`, `verify` and an editable `Plan`
+- Map times between the two releases with `Plan.to_target` and `Plan.to_donor`, for example to retime subtitles

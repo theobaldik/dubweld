@@ -29,7 +29,18 @@ def mmss(seconds: float, decimals: int = 1) -> str:
 
 @dataclass
 class InputRef:
-    """One input file as the plan saw it."""
+    """
+    One input file as the analysis saw it; `render` uses only `audio_index` and `duration`.
+
+    :param path: the file's path when it was analyzed
+    :param audio_index: the audio stream used, counted among the file's audio streams
+    :param duration: the file's duration, seconds
+    :param size: file size in bytes, to notice a different file at render time
+    :param mtime: modification time (POSIX seconds), for the same reason
+    :param fps: video frame rate as a fraction (`24000/1001`), empty without video
+    :param sample_rate: sample rate of the audio stream, Hz
+    :param channels: channel count of the audio stream
+    """
 
     path: str
     audio_index: int
@@ -46,37 +57,59 @@ class Segment:
     """
     A stretch of the target filled from the donor: target time t plays donor time (t - offset) / ratio.
 
-    `a_start`, `a_end` and `offset` drive the render; `b_start` / `b_end` (donor seconds) are informational and
-    recomputed on load.
+    Only `target_start`, `target_end` and `offset` drive the render; edit those by hand to fix a plan.
+
+    :param target_start: where the segment starts, target seconds
+    :param target_end: where it ends, target seconds
+    :param offset: seconds added to the stretched donor time to land on the target
+    :param donor_start: where it starts in the donor, donor seconds (recomputed by `Plan.normalize`)
+    :param donor_end: where it ends in the donor, donor seconds (recomputed by `Plan.normalize`)
+    :param windows: how many analysis windows matched at this offset
+    :param video_offset: the offset the videos agree on, or None when not checked; a difference from `offset` is
+        the donor's own audio-video sync error
     """
 
-    a_start: float
-    a_end: float
+    target_start: float
+    target_end: float
     offset: float
-    b_start: float = 0.0
-    b_end: float = 0.0
+    donor_start: float = 0.0
+    donor_end: float = 0.0
     windows: int = 0
     video_offset: float | None = None
 
 
 @dataclass
 class Evidence:
-    """One clue to where a cut is (`kind`: black, scene, silence, audio, midpoint); times in target seconds."""
+    """
+    One clue to where a cut is.
+
+    :param kind: `black` (a fade to black in the donor's video), `scene` (a scene cut), `silence`, `audio` (where the
+        matches change) or `midpoint` (no clue: the middle of the search range)
+    :param target_time: where the clue puts the cut, target seconds
+    :param detail: a human-readable description
+    """
 
     kind: str
-    a_time: float
+    target_time: float
     detail: str = ""
 
 
 @dataclass
 class Cut:
     """
-    A change of offset. `a_time` is the target time where the earlier segment ends; `b_time` the stretched donor
-    time of the same point. Confidence is high (video black), medium (scene cut, silence, sharp audio) or low.
+    A change of offset between two segments.
+
+    :param target_time: where the earlier segment ends, target seconds
+    :param donor_time: the same point in stretched donor time (donor seconds × ratio)
+    :param offset_before: offset of the earlier segment, seconds
+    :param offset_after: offset of the later segment, seconds
+    :param confidence: `high` (video black), `medium` (scene cut, silence, a sharp audio change) or `low` (a guess)
+    :param evidence: the clues found, strongest first
+    :param search: the target-time range searched for the cut, seconds
     """
 
-    a_time: float
-    b_time: float
+    target_time: float
+    donor_time: float
     offset_before: float
     offset_after: float
     confidence: str
@@ -85,23 +118,50 @@ class Cut:
 
     @property
     def jump(self) -> float:
+        """
+        Change of offset, seconds: positive where the target has extra material (left as a gap), negative where the
+        donor has (dropped).
+        """
         return self.offset_after - self.offset_before
 
 
 @dataclass
 class Gap:
-    """Target time with no donor audio (filled with silence or the target's own audio)."""
+    """
+    Target time with no donor audio, filled with silence or the target's own audio.
 
-    a_start: float
-    a_end: float
+    :param target_start: target seconds
+    :param target_end: target seconds
+    """
+
+    target_start: float
+    target_end: float
 
 
 @dataclass
 class Plan:
-    """Everything `render` needs, plus what the analysis saw (levels, windows) for reports."""
+    """
+    How to lay the donor's audio onto the target: target time = donor time × `ratio` + the segment's offset.
 
-    a: InputRef
-    b: InputRef
+    Everything `render` needs, plus what the analysis saw for reports. Save it with `save` to edit it by hand.
+
+    :param target: the file whose video and timeline are kept
+    :param donor: the file the dub comes from
+    :param ratio: donor-to-target speed ratio (25/23.976 for a PAL speed-up: the donor runs faster)
+    :param ratio_name: the standard ratio's name (`pal`, `ntsc`, ...), `estimated`, or the forced ratio's value
+    :param ratio_method: how the ratio was found: `snapped`, `forced` or `estimated`
+    :param segments: the donor stretches to play, sorted by target time and not overlapping
+    :param cuts: the offset changes between segments
+    :param warnings: things to listen to or check by hand
+    :param levels: the offset clusters the analysis found (informational, for the report)
+    :param candidates: the speed ratios tried and their scores (informational)
+    :param windows: per analysis window: `times` (stretched donor seconds), `offsets` (seconds) and `scores`
+        (normalized correlation); informational
+    :param version: plan format version
+    """
+
+    target: InputRef
+    donor: InputRef
     ratio: float
     ratio_name: str = ""
     ratio_method: str = ""
@@ -114,28 +174,32 @@ class Plan:
     version: int = PLAN_VERSION
 
     def gaps(self, min_length: float = 0.005) -> list[Gap]:
-        """Target time not covered by any segment, from 0 to the target's end."""
+        """
+        Target time not covered by any segment, from 0 to the target's end.
+
+        :param min_length: ignore gaps shorter than this, seconds
+        """
         out: list[Gap] = []
         t = 0.0
-        for seg in sorted(self.segments, key=lambda s: s.a_start):
-            if seg.a_start - t >= min_length:
-                out.append(Gap(t, seg.a_start))
-            t = max(t, seg.a_end)
-        if self.a.duration - t >= min_length:
-            out.append(Gap(t, self.a.duration))
+        for seg in sorted(self.segments, key=lambda s: s.target_start):
+            if seg.target_start - t >= min_length:
+                out.append(Gap(t, seg.target_start))
+            t = max(t, seg.target_end)
+        if self.target.duration - t >= min_length:
+            out.append(Gap(t, self.target.duration))
         return out
 
     def normalize(self) -> None:
         """Sort segments, trim overlaps (a later segment wins) and recompute the donor spans."""
-        self.segments.sort(key=lambda s: s.a_start)
+        self.segments.sort(key=lambda s: s.target_start)
         for prev, nxt in zip(self.segments, self.segments[1:]):
-            if prev.a_end > nxt.a_start:
-                log.warning("segments overlap at %s; trimming the earlier one", mmss(nxt.a_start))
-                prev.a_end = nxt.a_start
-        self.segments = [s for s in self.segments if s.a_end > s.a_start]
+            if prev.target_end > nxt.target_start:
+                log.warning("segments overlap at %s; trimming the earlier one", mmss(nxt.target_start))
+                prev.target_end = nxt.target_start
+        self.segments = [s for s in self.segments if s.target_end > s.target_start]
         for seg in self.segments:
-            seg.b_start = (seg.a_start - seg.offset) / self.ratio
-            seg.b_end = (seg.a_end - seg.offset) / self.ratio
+            seg.donor_start = (seg.target_start - seg.offset) / self.ratio
+            seg.donor_end = (seg.target_end - seg.offset) / self.ratio
 
     def validate(self) -> None:
         """
@@ -148,23 +212,53 @@ class Plan:
         if not self.segments:
             raise PlanError("the plan has no segments")
         for seg in self.segments:
-            if seg.a_end <= seg.a_start:
-                raise PlanError(f"segment at {mmss(seg.a_start)} ends before it starts")
-            if (seg.a_start - seg.offset) / self.ratio < -0.01:
-                raise PlanError(f"segment at {mmss(seg.a_start)} starts before the donor does")
+            if seg.target_end <= seg.target_start:
+                raise PlanError(f"segment at {mmss(seg.target_start)} ends before it starts")
+            if (seg.target_start - seg.offset) / self.ratio < -0.01:
+                raise PlanError(f"segment at {mmss(seg.target_start)} starts before the donor does")
+
+    def to_target(self, donor_time: float) -> float | None:
+        """
+        Map a donor time onto the target, e.g. to retime the donor's subtitles.
+
+        :param donor_time: donor seconds
+        :return: target seconds, or None where the donor's material isn't played (dropped at a cut, or outside the
+            segments)
+        """
+        for seg in self.segments:
+            if seg.donor_start <= donor_time < seg.donor_end:
+                return donor_time * self.ratio + seg.offset
+        return None
+
+    def to_donor(self, target_time: float) -> float | None:
+        """
+        Map a target time onto the donor.
+
+        :param target_time: target seconds
+        :return: donor seconds, or None in a gap without donor audio
+        """
+        for seg in self.segments:
+            if seg.target_start <= target_time < seg.target_end:
+                return (target_time - seg.offset) / self.ratio
+        return None
 
     def to_dict(self) -> dict[str, Any]:
+        """The plan as JSON-ready data, with the gaps added for readers of the file."""
         d = asdict(self)
         d["gaps"] = [asdict(g) for g in self.gaps()]
         return d
 
     def save(self, path: Path) -> None:
-        """Write the plan as JSON; the long per-window arrays go on single lines so the rest stays editable."""
+        """
+        Write the plan as JSON; the long per-window arrays go on single lines so the rest stays editable.
+
+        :param path: the JSON file to write
+        """
         d = self.to_dict()
         windows = d.pop("windows")
         d = _round(d)
         d["ratio"] = self.ratio
-        d["a"]["mtime"], d["b"]["mtime"] = self.a.mtime, self.b.mtime
+        d["target"]["mtime"], d["donor"]["mtime"] = self.target.mtime, self.donor.mtime
         text = json.dumps(d, indent=2, ensure_ascii=False)
         if windows:
             compact = ",\n".join(
@@ -176,8 +270,9 @@ class Plan:
     @classmethod
     def load(cls, path: Path) -> Plan:
         """
-        Read a plan written by `save` (and possibly edited by hand).
+        Read a plan written by `save` (and possibly edited by hand); normalizes and validates it.
 
+        :param path: the JSON file to read
         :raises PlanError: when the file is not a valid plan
         """
         try:
@@ -188,12 +283,18 @@ class Plan:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Plan:
+        """
+        Build a plan from data like `to_dict`'s; normalizes and validates it.
+
+        :param d: the parsed JSON
+        :raises PlanError: when the data is not a valid plan
+        """
         try:
             if int(d.get("version", 0)) > PLAN_VERSION:
                 raise PlanError(f"plan version {d['version']} is newer than this dubweld understands")
             plan = cls(
-                a=InputRef(**d["a"]),
-                b=InputRef(**d["b"]),
+                target=InputRef(**d["target"]),
+                donor=InputRef(**d["donor"]),
                 ratio=float(d["ratio"]),
                 ratio_name=d.get("ratio_name", ""),
                 ratio_method=d.get("ratio_method", ""),
@@ -226,8 +327,8 @@ class Plan:
         ]
         for i, s in enumerate(self.segments, 1):
             lines.append(
-                f"  {i:2d}  {mmss(s.a_start):>9} - {mmss(s.a_end):<9}  offset {s.offset:+9.4f} s"
-                f"  (donor {mmss(s.b_start)} - {mmss(s.b_end)})"
+                f"  {i:2d}  {mmss(s.target_start):>9} - {mmss(s.target_end):<9}  offset {s.offset:+9.4f} s"
+                f"  (donor {mmss(s.donor_start)} - {mmss(s.donor_end)})"
             )
         if self.cuts:
             lines += ["", "cuts (listen around these):"]
@@ -239,12 +340,15 @@ class Plan:
             ev = c.evidence[0] if c.evidence else None
             how = f"{ev.kind}: {ev.detail}" if ev else "no evidence"
             lines.append(
-                f"  {mmss(c.a_time):>9}  {c.offset_before:+.3f} -> {c.offset_after:+.3f}  {what}  [{c.confidence}; {how}]"
+                f"  {mmss(c.target_time):>9}  {c.offset_before:+.3f} -> {c.offset_after:+.3f}  {what}  [{c.confidence}; {how}]"
             )
-        gaps = [g for g in self.gaps() if g.a_end - g.a_start >= 0.05]
+        gaps = [g for g in self.gaps() if g.target_end - g.target_start >= 0.05]
         if gaps:
             lines += ["", "gaps without dub:"]
-            lines += [f"  {mmss(g.a_start):>9} - {mmss(g.a_end):<9} ({g.a_end - g.a_start:.2f} s)" for g in gaps]
+            lines += [
+                f"  {mmss(g.target_start):>9} - {mmss(g.target_end):<9} ({g.target_end - g.target_start:.2f} s)"
+                for g in gaps
+            ]
         for w in self.warnings:
             lines += ["", f"WARNING: {w}"]
         return "\n".join(lines)

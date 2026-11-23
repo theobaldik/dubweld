@@ -67,7 +67,7 @@ def test_render_matches_the_synced_reference(release: RealRelease, rendered: Pat
     if release.synced is None:
         pytest.skip(f"no synced{release.id}.*")
     dub_track = len(probe(release.synced).audio) - 1
-    cross = verify(release.synced, rendered, a_track=dub_track)
+    cross = verify(release.synced, rendered, target_track=dub_track)
     assert cross.verdict == "pass", cross.describe()
     assert cross.coverage > 0.9
     assert cross.median_ms <= 10

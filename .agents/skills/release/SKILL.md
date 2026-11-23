@@ -40,12 +40,12 @@ docs' own style and in American English. Never edit released changelog sections.
 |---|---|
 | CLI flags and exit codes | `uv run dubweld --help` and `uv run dubweld <analyze\|render\|verify\|run> --help` against the option table, the usage examples and the exit-code line in `README.md`; the `EXIT_*` constants in `dubweld/cli.py` against that line |
 | Example output | the sample `dubweld run` output in `README.md` still matches the format of `Plan.describe()` and `VerifyReport.describe()` (wording, columns), not necessarily the numbers |
-| Library API | `__all__` in `dubweld/__init__.py` and the `DubweldError` subclasses in `dubweld/errors.py` against any library usage the docs describe |
+| Library API | `__all__` in `dubweld/__init__.py` and the `DubweldError` subclasses in `dubweld/errors.py` against *Using as a library* in `README.md` (run its example's calls against the real signatures); every name in `__all__` and its public methods has the docstring AGENTS.md asks for |
 | Features and limitations | each user-facing change since the last tag (step 4's log) reflected in `README.md` *How it works* / *Limitations* |
 | Requirements | `requires-python` and the dependencies in `pyproject.toml` against *Requirements* / *Install* in `README.md` and AGENTS.md |
 | AGENTS.md | every module of `dubweld/` in the architecture table, every test file it names existing, the suite's runtime roughly right (from step 3), and every backticked identifier it names still existing (`grep -rn` it in the code) |
-| Pins | the `uv` version in `.github/workflows/tests.yml` and the `uv_build` range in `pyproject.toml` still fit the `uv` in use (`uv --version`); the CI Python matrix covers `requires-python`'s lower bound |
-| Project URLs | `[project.urls]` in `pyproject.toml` and links in `README.md` point at `github.com/theobaldik/dubweld` |
+| Pins | the `uv` version in `.github/workflows/tests.yml` and `release.yml` and the `uv_build` range in `pyproject.toml` still fit the `uv` in use (`uv --version`); the CI Python matrix covers `requires-python`'s lower bound |
+| Project URLs | `[project.urls]` in `pyproject.toml` and links in `README.md` point at `github.com/theobaldik/dubweld`; `README.md` is also the PyPI page, so its links and images are absolute URLs |
 
 If a doc is wrong in a way the code can't settle (is it the doc or the code that's wrong?), ask instead of guessing.
 
@@ -130,5 +130,6 @@ Then give the commands for the user to run, without running any of them:
 1. If step 2 changed docs, commit them first, as a separate `docs: ...` commit (stage those files only); then the
    rest as `chore: release X.Y.Z`. Both messages follow Conventional Commits, scope as in AGENTS.md.
 2. `git tag vX.Y.Z && git push origin master vX.Y.Z`. The tag push makes `.github/workflows/release.yml` check that
-   the tag matches `project.version` and create the GitHub release from the changelog section.
-3. Only if the user publishes to PyPI: `uv publish "$SCRATCH/dist"/*` (rebuild first if anything changed after step 3).
+   the tag matches `project.version`, create the GitHub release from the changelog section and publish the package
+   to PyPI (Trusted Publishing, the `pypi` environment). A PyPI release can't be replaced: a mistake needs a new
+   version.
