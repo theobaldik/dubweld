@@ -3,7 +3,7 @@
 ## Commands
 
 - **Install deps:** `uv sync`
-- **Run tests:** `uv run pytest` (about 4 minutes; `-m "not slow and not real"` for the fast unit tests only)
+- **Run tests:** `uv run pytest` (about 2 minutes; `-m "not slow and not real"` for the fast unit tests only)
 - **Run the CLI:** `uv run dubweld run TARGET DONOR -o tries/synced.mkv` (or `uv run python -m dubweld`)
 - **Build:** `uv build`
 - **Format:** `black .` (line length 120, configured in `pyproject.toml`; not a declared dev dependency)
@@ -39,6 +39,7 @@
 |---|---|
 | `probe.py` | ffprobe JSON → `MediaInfo`; skips attached cover pictures (they show up as video streams) |
 | `ffmpeg.py` | `Tools` (executable paths), `run()`, PCM decoding, streaming decoder/encoder processes |
+| `cache.py` | on-disk cache of decoded features, keyed by path, stream, size and mtime; bump `FEATURE_VERSION` when features change |
 | `features.py` | 16 kHz mono → 50 fps, 32 log-spaced bands, `log1p(1e4·E)` on raw power, 5 s moving average removed, z-scored per band; RMS envelope. `stretch()` resamples features by the speed ratio |
 | `xcorr.py` | `Matcher`: normalized cross-correlation of windows against the whole target. Coarse: decimated ×4 and projected on the target's top 12 principal components, top 5 peaks. Fine: exact NCC within ±12 frames (per-band `np.correlate`), parabolic sub-frame step |
 | `ratio.py` | standard ratio candidates (frame-rate quotient first), flatness and drift scoring, free-form fallback (used only when clearly flatter than the best standard ratio) |
@@ -46,10 +47,11 @@
 | `video.py` | `VideoReader` decodes short ranges as 32×18 gray frames; black runs, scene cuts, time-based frame matching |
 | `cuts.py` | `localize()`: changepoint range, then video black → scene cut → silence → audio, with evidence and confidence |
 | `analyze.py` | `analyze()` orchestrates everything into a `Plan`; a second look at the donor's unmatched head and tail with 4 s windows finds short end segments (a closing jingle) |
-| `plan.py` | `Plan` / `Segment` / `Cut` / `Evidence` / `Gap`, JSON save/load, the text summary |
+| `plan.py` | `Plan` / `Segment` / `Cut` / `Evidence` / `Gap` / `InputRef`, JSON save/load, `to_target` / `to_donor` time mapping, the text summary |
 | `render.py` | streaming render (`_Tape` readers, raised-cosine crossfades), encode, mux |
 | `verify.py` | local ±1 s residuals of the rendered track, crisp non-zero clusters (= out of sync; sparser agreement counts outside the dialogue band, only a warning near matches at 0 inside it), coverage |
 | `report.py` | self-contained HTML with inline SVG |
+| `errors.py` | `DubweldError` and its subclasses, the only exceptions the library raises on purpose |
 | `cli.py` | argparse front end; progress on stderr, summaries on stdout |
 
 Time convention everywhere: **target time = donor time × ratio + offset**. "Stretched" donor time means donor time ×

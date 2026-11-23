@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.0] - 2026-11-23
 
 _Initial release._
 
@@ -18,3 +18,5 @@ _Initial release._
 - Write an editable JSON plan, and a self-contained HTML report
 - Use dubweld as a Python library: `analyze`, `render`, `verify` and an editable `Plan`
 - Map times between the two releases with `Plan.to_target` and `Plan.to_donor`, for example to retime subtitles
+
+[0.1.0]: https://github.com/theobaldik/dubweld/releases/tag/v0.1.0

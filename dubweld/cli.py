@@ -148,8 +148,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     p = sub.add_parser("analyze", help="work out the sync plan", description="Analyze and write a plan (JSON).")
-    p.add_argument("target", type=Path, help="file whose video and timeline to keep (A)")
-    p.add_argument("donor", type=Path, help="file with the dub (B)")
+    p.add_argument("target", type=Path, help="file whose video and timeline to keep")
+    p.add_argument("donor", type=Path, help="file with the dub")
     p.add_argument("-o", "--output", type=Path, help="plan file (default <target>.dubweld.json)")
     p.add_argument("--report", type=Path, help="also write an HTML report here")
     _analyze_args(p)
